@@ -31,9 +31,8 @@ mdns-sd = { version = "0.21", default-features = false, features = ["logging"] }
 # features.
 mio = { version = "1", features = ["net", "os-poll"] }
 serde = { version = "1.0", features = ["derive"] }
-# `iem-dante-dev health` (phase D, plan Task 6): it reads the control
-# socket's status line and the server's /api/version, and writes its own
-# line. MIT OR Apache-2.0; already in the engine's closure.
+# `health::parse_status` reads the control socket's status line (MIT OR
+# Apache-2.0).
 serde_json = "1.0"
 # The RX flow sockets' receive buffer (SO_RCVBUF; MIT OR Apache-2.0).
 # Already in the lockfile through tokio.
@@ -42,7 +41,7 @@ thiserror = "2.0"
 # The ARC server's UDP socket and the change signal to the mDNS announcer;
 # the daemon's select loop (`macros`), the info server's heartbeat
 # (`time`), and iem-dante-dev's runtime and SIGTERM/SIGINT (`rt`,
-# `signal`). Already in the lockfile through iem-server.
+# `signal`).
 tokio = { version = "1", features = ["macros", "net", "rt", "signal", "sync", "time"] }
 # The device config and its state file, as the other crates read TOML.
 toml = "0.9"

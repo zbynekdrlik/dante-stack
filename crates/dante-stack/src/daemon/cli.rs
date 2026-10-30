@@ -12,7 +12,7 @@
 //! signal and the goodbyes; 1 when the address is not there (yet), the
 //! interface's MAC cannot be read, serving failed or the goodbyes were not
 //! confirmed; 2 for the command line, the config, the state file or an
-//! interface without a usable MAC. `clock`, `ctl` and `health` are
+//! interface without a usable MAC. `clock` and `ctl` are
 //! described in [`super::usage`].
 
 use std::io::{BufRead, BufReader, Write};
@@ -24,7 +24,6 @@ use std::time::Duration;
 
 use super::{Build, ClockLines, Command, ctl_succeeded, parse_args, usage};
 use crate::clock::{DANTESYNC, MonoClock, POLL, Poller};
-use crate::health;
 use crate::host::{self, Host, Signals};
 use tokio::time::MissedTickBehavior;
 use tracing::error;
@@ -46,7 +45,6 @@ pub fn main(build: Build) -> ExitCode {
         }
         Ok(Command::Clock { seconds }) => return clock(build.name, seconds),
         Ok(Command::Ctl { socket, request }) => return ctl_request(build.name, &socket, &request),
-        Ok(Command::Health(opts)) => return health_line(build, &opts),
         Ok(Command::Run(opts)) => opts,
         Err(msg) => {
             eprintln!("{}: {msg}\n\n{}", build.name, usage(build.name));
@@ -110,17 +108,6 @@ fn clock(name: &str, seconds: u32) -> ExitCode {
         }
         ExitCode::SUCCESS
     })
-}
-
-/// `health`: the box's verdict, one line on stdout, its state's exit
-/// code.
-fn health_line(build: Build, opts: &health::Options) -> ExitCode {
-    let verdict = health::check(opts, build);
-    if let Err(e) = writeln!(std::io::stdout(), "{}", verdict.line()) {
-        eprintln!("{} health: stdout: {e}", build.name);
-        return ExitCode::from(1);
-    }
-    ExitCode::from(verdict.state.exit_code())
 }
 
 /// `ctl`: one request line to the control socket at `path`, its answer

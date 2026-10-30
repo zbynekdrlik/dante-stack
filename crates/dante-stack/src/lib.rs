@@ -71,11 +71,11 @@
 //!   (`host::prepare`), its serving on a thread of its own
 //!   (`host::Prepared::start`) and its bounded stop (`host::Host::stop`);
 //!   `iem-dante-dev` and the engine host it the same way.
-//! - [`health`] (phase D, plan
-//!   `docs/superpowers/plans/2026-10-26-gen3-phase-d-the-box.md` Task 6):
-//!   `iem-dante-dev health`, the box's verdict from the three units'
-//!   systemd states, two reads of the control socket and the server's
-//!   `/api/version`: one line of numbers and fixed words.
+//! - [`health`]: the device's health as an application reads it: one
+//!   control-socket status line (`health::parse_status`,
+//!   `health::read_status`) and the device's own reasons from two reads
+//!   (`health::device_reasons`); an application builds its box verdict on
+//!   them.
 //!
 //! The device answers for itself only: it never sends a command that
 //! changes another Dante device.
