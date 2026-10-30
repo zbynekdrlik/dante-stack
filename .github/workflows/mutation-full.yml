@@ -1,0 +1,73 @@
+name: mutation-full
+
+# The full-tree mutation sweep: on demand only (the `/mutation-sweep` skill
+# dispatches it when there is capacity), never on a schedule, on
+# GitHub-hosted runners. Surviving mutants are filed as one test-quality
+# issue a shard; the job fails only when the tool cannot run.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  mutants:
+    name: mutation full shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0-based (cargo-mutants --shard k/n)
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: mutation
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.146
+      - name: Full-tree mutants
+        env:
+          NEXTEST_PROFILE: mutants
+        run: |
+          set -uo pipefail
+          cargo mutants --baseline=skip --timeout 60 --jobs 2 \
+            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
+            --package dante-stack --package dante-audio-io
+          code=$?
+          case "$code" in
+            0|2|3) echo "cargo-mutants finished (exit $code)" ;;
+            *) echo "::error::cargo-mutants failed to run (exit $code)"; exit "$code" ;;
+          esac
+      - name: File the survivors
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -s mutants.out/missed.txt ]; then
+            echo "No survivors in shard ${{ matrix.shard }}."
+            exit 0
+          fi
+          {
+            echo "Surviving mutants from the full sweep (run ${{ github.run_id }}, shard ${{ matrix.shard }}): each needs an assertion that kills it, or an exclusion with its reason in .cargo/mutants.toml."
+            echo
+            echo '```'
+            cat mutants.out/missed.txt
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          gh label create test-quality --color fbca04 --description "Mutation survivors" --repo "${{ github.repository }}" 2>/dev/null || true
+          gh issue create --repo "${{ github.repository }}" --label test-quality \
+            --title "Mutation survivors: full sweep shard ${{ matrix.shard }} (run ${{ github.run_id }})" \
+            --body-file "$RUNNER_TEMP/body.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out/
+          retention-days: 14
+          if-no-files-found: error

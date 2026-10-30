@@ -113,6 +113,55 @@ jobs:
             echo "::endgroup::"
           done
 
+  mutation:
+    # Mutants of the PR's own diff only (.cargo/mutants.toml), 4 shards of at
+    # most 20 minutes; a mutant the tests miss fails the PR (kill it with an
+    # assertion). An overrun is a setup bug: shard more or narrow, never a
+    # longer timeout.
+    if: github.event_name == 'pull_request'
+    needs: [test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: mutation
+      - uses: taiki-e/install-action@7623a79cdfecb99d681017af368ca353d9f49bb5 # v2.87.19
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.146
+      - name: Mutants of the diff
+        env:
+          NEXTEST_PROFILE: mutants
+        run: |
+          set -euo pipefail
+          git diff "origin/${{ github.base_ref }}...HEAD" -- '*.rs' > "$RUNNER_TEMP/pr.diff"
+          if [ ! -s "$RUNNER_TEMP/pr.diff" ]; then
+            echo "No Rust changes against ${{ github.base_ref }}: no mutants to test."
+            exit 0
+          fi
+          status=0
+          cargo mutants --in-diff "$RUNNER_TEMP/pr.diff" --baseline=skip --timeout 60 --jobs 2 \
+            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
+            --package dante-stack --package dante-audio-io || status=$?
+          if [ -s mutants.out/missed.txt ]; then
+            echo "::group::missed mutants"; cat mutants.out/missed.txt; echo "::endgroup::"
+          fi
+          # 0: all caught; 3: some caught only by a timeout (a hung test is a
+          # catch); 2: a mutant missed; anything else: the tool did not run.
+          case "$status" in
+            0|3) ;;
+            2) echo "::error::mutants in this diff survived (above): add assertions that kill them"; exit 2 ;;
+            *) echo "::error::cargo-mutants failed to run (exit $status)"; exit "$status" ;;
+          esac
+
   version:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04

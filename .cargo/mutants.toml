@@ -1,0 +1,9 @@
+# cargo-mutants: the PR gate in .github/workflows/ci.yml (`mutation`, only the
+# mutants in the PR's diff, sharded, 20 minutes a shard at most) and the full
+# sweep in .github/workflows/mutation-full.yml (on demand, never on a
+# schedule). Both run the unit tests and tests/hot_path.rs per mutant; the
+# whole-device tests (system_clock, loopback) bind the Dante ports and run in
+# the test job only, and tests/rtsan.rs needs the nightly sanitizer.
+profile = "mutants"
+test_tool = "nextest"
+additional_cargo_test_args = ["--lib", "--test", "hot_path"]
