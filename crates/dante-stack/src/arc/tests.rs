@@ -2635,3 +2635,65 @@ fn a_name_dante_does_not_hold_is_refused() {
         assert_eq!(dev.state, before);
     }
 }
+
+#[test]
+fn a_device_rename_moves_our_own_subscriptions_to_the_new_name() {
+    let mut dev = Dev::new(config());
+    let old = dev.state.name.clone();
+    // RX 1 on our own TX 1 (any case), RX 2 on another device's TX 1.
+    dev.state.subscriptions = vec![None; dev.cfg.rx.len()];
+    dev.state.subscriptions[0] = Some(sub("TX 1", &old.to_uppercase()));
+    dev.state.subscriptions[1] = Some(sub("TX 1", "other-device"));
+    match dev.send(&request(NETAUDIO, 1, 0x1001, 0, b"stage-left\0")) {
+        ArcOutcome::Changed(_, change) => {
+            assert!(change.device_renamed);
+            assert_eq!(
+                change.subscriptions,
+                vec![0],
+                "the manager takes RX 1 again"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(dev.state.subscriptions[0], Some(sub("TX 1", "stage-left")));
+    assert_eq!(
+        dev.state.subscriptions[1],
+        Some(sub("TX 1", "other-device"))
+    );
+}
+
+#[test]
+fn a_device_rename_body_reads_up_to_its_nul() {
+    let mut dev = Dev::new(config());
+    // Bytes after the NUL are not read (netaudio sends none).
+    let answer = dev.ask(1, 0x1001, b"stage-left\0junk");
+    assert_eq!(answer.header.op2, STATUS_OK);
+    assert_eq!(dev.state.name, "stage-left");
+    // A name that is not UTF-8 is refused.
+    let before = dev.state.clone();
+    let answer = dev.ask(2, 0x1001, b"\xff\0");
+    assert_eq!(answer.header.op2, STATUS_ERROR);
+    assert_eq!(dev.state, before);
+}
+
+#[test]
+fn the_manager_asks_under_its_new_host() {
+    use crate::daemon::media::tests::{Records, advert};
+    use crate::subscribe::Action;
+    let cfg = config();
+    let mut m = manager_of(&cfg);
+    m.set_host("stage-left");
+    let mut subs = vec![None; cfg.rx.len()];
+    subs[0] = Some(sub("TX 1", "peer-device"));
+    m.load(&subs);
+    let records = Records::default().with(
+        "peer-device",
+        "TX 1",
+        advert(std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4455), 1),
+    );
+    let actions = m.tick(1, &[0; crate::subscribe::MAX_FLOWS], &records);
+    let Some(Action::Request { req, .. }) = actions.first() else {
+        panic!("{actions:?}");
+    };
+    assert_eq!(req.rx_host, "stage-left");
+}
