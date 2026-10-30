@@ -57,7 +57,7 @@ use tokio::sync::Notify;
 use tracing::{info, warn};
 
 use crate::announce::Announcer;
-use crate::clock::{ClockStats, MonoClock, monotonic_ns, poll_dantesync, realtime_ns};
+use crate::clock::{ClockStats, Event, MonoClock, monotonic_ns, poll_dantesync, realtime_ns};
 #[cfg(unix)]
 use crate::ctl;
 use crate::daemon::media::{Clock, Media};
@@ -97,6 +97,19 @@ fn setup(e: impl Display) -> HostError {
 
 fn run_failed(e: impl Display) -> HostError {
     HostError::Run(e.to_string())
+}
+
+/// Where the media clock's PTP time comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClockSource {
+    /// dantesync on the box, polled once a second: the network's PTP time
+    /// (production; [`prepare`] always uses it).
+    Dantesync,
+    /// TEST ONLY: this machine's own clock (realtime, read once, then
+    /// monotonic), ready at once, never re-anchored. For a device with no
+    /// PTP network (CI): its flows are on no network's time, so another
+    /// device cannot play them in sync. Logged as a warning at start.
+    System,
 }
 
 /// What SIGTERM and SIGINT do while the device serves.
@@ -280,9 +293,15 @@ pub struct Prepared {
     sockets: Sockets,
     /// The media clock the poller keeps (the media side reads it).
     mono: Arc<MonoClock>,
+    source: ClockSource,
     media: Arc<Media>,
     #[cfg(unix)]
     listener: UnixListener,
+}
+
+/// [`prepare_with`] on dantesync's clock: the production device.
+pub fn prepare(opts: &Options, engine_tx: &[usize]) -> Result<Prepared, HostError> {
+    prepare_with(opts, engine_tx, ClockSource::Dantesync)
 }
 
 /// The device of `opts` set up, nothing served yet: the config, its state
@@ -293,8 +312,13 @@ pub struct Prepared {
 /// index the device lacks is [`HostError::Setup`]), and the control socket
 /// at `opts.control`. Glue: every decision is [`read_config`]'s,
 /// [`load_device`]'s, [`daemon::pick_interface`]'s, [`interface_info`]'s
-/// and [`Media::new`]'s.
-pub fn prepare(opts: &Options, engine_tx: &[usize]) -> Result<Prepared, HostError> {
+/// and [`Media::new`]'s. The media clock follows `source`
+/// ([`ClockSource::System`] is for tests only).
+pub fn prepare_with(
+    opts: &Options,
+    engine_tx: &[usize],
+    source: ClockSource,
+) -> Result<Prepared, HostError> {
     let device = load_device(read_config(&opts.config)?)?;
     if let Some(&tx) = engine_tx.iter().find(|&&tx| tx >= device.cfg.tx.len()) {
         return Err(setup(format!(
@@ -319,7 +343,11 @@ pub fn prepare(opts: &Options, engine_tx: &[usize]) -> Result<Prepared, HostErro
         latency_ns = device.cfg.latency_ns,
         link_mbit_s = net.link_speed,
         gateway = !net.gateway.is_unspecified(),
-        "Dante device starting (flows on PTP time from dantesync; no PTP sent)"
+        clock = match source {
+            ClockSource::Dantesync => "dantesync",
+            ClockSource::System => "system (test only)",
+        },
+        "Dante device starting (no PTP sent)"
     );
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -334,6 +362,16 @@ pub fn prepare(opts: &Options, engine_tx: &[usize]) -> Result<Prepared, HostErro
         freq: Arc::new(AtomicI32::new(0)),
         stats: Arc::new(ClockStats::default()),
     };
+    if source == ClockSource::System {
+        // Test only: PTP time is this machine's clock from now on.
+        let k_ns = realtime_ns() - monotonic_ns();
+        mono.set_k(k_ns);
+        clock.stats.record(Event::Ready { k_ns });
+        warn!(
+            "media clock: the TEST system clock; PTP time is this machine's clock, not the \
+             network's: never for a real Dante network"
+        );
+    }
     let media = Media::new(&device, net.ip, clock, seed(), engine_tx)
         .map_err(|e| run_failed(format!("the flow sockets: {e}")))?;
     #[cfg(unix)]
@@ -352,6 +390,7 @@ pub fn prepare(opts: &Options, engine_tx: &[usize]) -> Result<Prepared, HostErro
         rt,
         sockets,
         mono,
+        source,
         media: Arc::new(media),
         #[cfg(unix)]
         listener,
@@ -405,6 +444,7 @@ impl Prepared {
             rt,
             sockets,
             mono,
+            source,
             media,
             #[cfg(unix)]
             listener,
@@ -429,6 +469,7 @@ impl Prepared {
             net,
             sockets,
             mono,
+            source,
             media,
             #[cfg(unix)]
             listener,
@@ -454,6 +495,7 @@ struct Served {
     net: NetInfo,
     sockets: Sockets,
     mono: Arc<MonoClock>,
+    source: ClockSource,
     media: Arc<Media>,
     #[cfg(unix)]
     listener: UnixListener,
@@ -588,11 +630,13 @@ async fn serve_device(
     control: &Control,
     watch: Watch,
 ) -> Result<(), ServeError> {
-    tokio::spawn(poll_dantesync(
-        s.mono,
-        Arc::clone(&s.media.freq),
-        Arc::clone(&s.media.clock_stats),
-    ));
+    if s.source == ClockSource::Dantesync {
+        tokio::spawn(poll_dantesync(
+            s.mono,
+            Arc::clone(&s.media.freq),
+            Arc::clone(&s.media.clock_stats),
+        ));
+    }
     info!(
         arc = arc::PORT,
         cmc = cmc::PORT,
