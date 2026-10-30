@@ -617,6 +617,7 @@ const WORDS: &[&str] = &[
     "keepalives",
     "rebootstraps",
     "holes",
+    "late_bins",
     "late_max_us",
     "send_max_us",
     "rx",
@@ -911,7 +912,7 @@ fn the_status_lists_the_flows_of_both_sides() {
         s.contains(
             "\"tx\":[{\"flow\":1,\"live\":1,\"fpp\":32,\"channels\":3,\"packets\":0,\
              \"send_errors\":0,\"keepalives\":0,\"rebootstraps\":0,\"holes\":0,\
-             \"late\":[0,0,0,0,0,0],\"late_max_us\":0,\"send_max_us\":0}]"
+             \"late_bins\":[0,0,0,0,0,0],\"late_max_us\":0,\"send_max_us\":0}]"
         ),
         "{s}"
     );

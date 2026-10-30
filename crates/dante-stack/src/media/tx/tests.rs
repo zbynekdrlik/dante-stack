@@ -1373,13 +1373,25 @@ fn first_due_ns(now: u64) -> u64 {
 fn packets_sent_on_time_are_in_the_first_bin() {
     let mut rig = Rig::new(Vec::new());
     let (slot, _) = rig.flow(vec![Some(1), Some(2)]);
-    let packets = run(&mut rig, 0, 20_000).len() as u64;
+    // Steps every 500 µs of PTP time; each step's own (real) time adds to
+    // the lateness of what it sends, so the bound carries the longest.
+    let mut longest = 0u64;
+    let mut at = T;
+    while at <= T + 20 * MS {
+        let began = Instant::now();
+        rig.tx.step(Some(at), 0);
+        longest = longest.max(nanos(began.elapsed()));
+        at += 500_000;
+    }
+    let packets = drain(&rig.rx).len() as u64;
     let lane = rig.shared.lane(slot);
-    assert_eq!(lane.late.iter().sum::<u64>(), lane.packets);
     assert_eq!(lane.packets, packets);
-    // Stepping every 500 µs: none leaves 1 ms past due or later.
-    assert_eq!(lane.late[3..], [0, 0, 0], "{lane:?}");
-    assert!(lane.late_max_ns < 1_000_000, "{lane:?}");
+    assert!((58..=60).contains(&packets), "{packets}");
+    assert_eq!(lane.late_bins.iter().sum::<u64>(), lane.packets);
+    assert!(
+        lane.late_max_ns < 500_000 + longest + 1_000,
+        "{lane:?}, longest step {longest} ns"
+    );
 }
 
 /// Catalog: the 30.10 stall on the FOH PC. The TX thread is not scheduled
@@ -1397,16 +1409,22 @@ fn a_stall_within_the_latency_is_counted_as_late_packets() {
     let start = T;
     rig.tx.step(Some(start), 0);
     let due = first_due_ns(start);
+    let began = Instant::now();
     rig.tx.step(Some(due + 5_500_000), 0);
+    let took = nanos(began.elapsed());
     let lane = rig.shared.lane(slot);
     assert_eq!(lane.rebootstraps, 0, "inside the latency: no restart");
     // 5.5 ms of 333 µs packets: 17 out at once, the first 5.5 ms late.
     assert!((16..=18).contains(&lane.packets), "{lane:?}");
-    assert_eq!(lane.late.iter().sum::<u64>(), lane.packets);
-    assert!(lane.late[5] >= 1, "one at 5 ms past due or more: {lane:?}");
+    assert_eq!(lane.late_bins.iter().sum::<u64>(), lane.packets);
     assert!(
-        (5_500_000..6_500_000).contains(&lane.late_max_ns),
-        "{lane:?}"
+        lane.late_bins[5] >= 1,
+        "one at 5 ms past due or more: {lane:?}"
+    );
+    // The first packet left 5.5 ms past due, plus the step's own time.
+    assert!(
+        (5_500_000..5_500_000 + took + 1_000).contains(&lane.late_max_ns),
+        "{lane:?}, step took {took} ns"
     );
     assert!(lane.send_max_ns < lane.late_max_ns, "{lane:?}");
 }
