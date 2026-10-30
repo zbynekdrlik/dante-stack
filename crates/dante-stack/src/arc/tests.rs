@@ -61,6 +61,13 @@ impl Flows for NoFlows {
         rx.load(subs);
         rx.changed()
     }
+
+    fn renamed(&self, name: &str) {
+        self.rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_host(name);
+    }
 }
 
 /// netaudio's start code; Dante Controller's is 0x2729.
@@ -273,6 +280,7 @@ fn subs_changed(rx: &[usize]) -> Change {
     Change {
         renamed_rx: Vec::new(),
         subscriptions: rx.to_vec(),
+        device_renamed: false,
     }
 }
 
@@ -1120,12 +1128,11 @@ fn an_opcode_inferno_does_not_answer_gets_no_reply() {
     let mut dev = Dev::new(config());
     dev.state.tx[0] = "Mix 1".into();
     let before = dev.state.clone();
-    let set_name = [&[0u8, 0][..], b"renamed\0"].concat();
     for (op1, body) in [
         // Dante Controller's 0x2204 with its captured body.
         (0x2204, DC_FIRST_PAGE.to_vec()),
-        // netaudio's set_name and set_latency: not in inferno either.
-        (0x1001, set_name),
+        // netaudio's set_latency: not in inferno either (set_name, 0x1001,
+        // is answered since v0.2.5).
         (0x1101, vec![0, 0, 0, 5]),
         (0x2203, DC_FIRST_PAGE.to_vec()),
         (0x3201, DC_FIRST_PAGE.to_vec()),
@@ -2354,7 +2361,7 @@ fn random_requests_never_panic_and_keep_the_names_valid() {
         let outcome = dev.send(&request(NETAUDIO, seq, op1, op2, &body));
         // No reply only where inferno sends none: op2 not 0, an opcode it
         // does not handle, a body it cannot read.
-        let silent = op2 != 0 || matches!(op1, 0x1001 | 0x2204);
+        let silent = op2 != 0 || op1 == 0x2204;
         let readable = !matches!(
             op1,
             op::TX_MULTICAST_CREATE
@@ -2376,7 +2383,11 @@ fn random_requests_never_panic_and_keep_the_names_valid() {
             changes += 1;
             assert!(matches!(
                 op1,
-                op::TX_RENAME | op::RX_RENAME | op::RX_SUBSCRIBE | op::RX_UNSUBSCRIBE
+                op::TX_RENAME
+                    | op::RX_RENAME
+                    | op::RX_SUBSCRIBE
+                    | op::RX_UNSUBSCRIBE
+                    | op::DEVICE_RENAME
             ));
             assert_ne!(dev.state, before);
         } else {
@@ -2567,4 +2578,122 @@ async fn the_server_sends_nothing_for_an_opcode_inferno_does_not_answer() {
     let more = tokio::time::timeout(Duration::from_millis(200), peer.recv_from(&mut buf)).await;
     assert!(more.is_err(), "an unanswered request was answered");
     s.task.abort();
+}
+
+// ---- the device's own name (0x1001, request #2) ----
+
+#[test]
+fn dante_controller_renames_the_device() {
+    let mut dev = Dev::new(config());
+    let answer = dev.ask(9, 0x1001, b"stage-left\0");
+    assert_eq!(answer.header.op2, STATUS_OK);
+    assert!(answer.changed, "the state changed");
+    assert_eq!(dev.state.name, "stage-left");
+    // The device's name reply and the 0x1003 names carry it from now on.
+    let name = dev.ask(10, op::DEVICE_NAME, &[]);
+    assert_eq!(name.body, b"stage-left\0");
+    let outcome = dev.send(&request(NETAUDIO, 11, 0x1001, 0, b"stage-left\0"));
+    assert!(
+        matches!(outcome, ArcOutcome::Reply(_)),
+        "the same name again changes nothing: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_device_rename_carries_its_change() {
+    let mut dev = Dev::new(config());
+    match dev.send(&request(NETAUDIO, 1, 0x1001, 0, b"stage-left\0")) {
+        ArcOutcome::Changed(_, change) => assert_eq!(
+            change,
+            Change {
+                renamed_rx: Vec::new(),
+                subscriptions: Vec::new(),
+                device_renamed: true,
+            }
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_name_dante_does_not_hold_is_refused() {
+    for body in [
+        &b"\0"[..],
+        b"-stage\0",
+        b"stage-\0",
+        b"stage left\0",
+        b"a.b\0",
+        b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0",
+        b"stage",
+        b"",
+    ] {
+        let mut dev = Dev::new(config());
+        let before = dev.state.clone();
+        let answer = dev.ask(1, 0x1001, body);
+        assert_eq!(answer.header.op2, STATUS_ERROR, "{body:?}");
+        assert!(!answer.changed);
+        assert_eq!(dev.state, before);
+    }
+}
+
+#[test]
+fn a_device_rename_moves_our_own_subscriptions_to_the_new_name() {
+    let mut dev = Dev::new(config());
+    let old = dev.state.name.clone();
+    // RX 1 on our own TX 1 (any case), RX 2 on another device's TX 1.
+    dev.state.subscriptions = vec![None; dev.cfg.rx.len()];
+    dev.state.subscriptions[0] = Some(sub("TX 1", &old.to_uppercase()));
+    dev.state.subscriptions[1] = Some(sub("TX 1", "other-device"));
+    match dev.send(&request(NETAUDIO, 1, 0x1001, 0, b"stage-left\0")) {
+        ArcOutcome::Changed(_, change) => {
+            assert!(change.device_renamed);
+            assert_eq!(
+                change.subscriptions,
+                vec![0],
+                "the manager takes RX 1 again"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(dev.state.subscriptions[0], Some(sub("TX 1", "stage-left")));
+    assert_eq!(
+        dev.state.subscriptions[1],
+        Some(sub("TX 1", "other-device"))
+    );
+}
+
+#[test]
+fn a_device_rename_body_reads_up_to_its_nul() {
+    let mut dev = Dev::new(config());
+    // Bytes after the NUL are not read (netaudio sends none).
+    let answer = dev.ask(1, 0x1001, b"stage-left\0junk");
+    assert_eq!(answer.header.op2, STATUS_OK);
+    assert_eq!(dev.state.name, "stage-left");
+    // A name that is not UTF-8 is refused.
+    let before = dev.state.clone();
+    let answer = dev.ask(2, 0x1001, b"\xff\0");
+    assert_eq!(answer.header.op2, STATUS_ERROR);
+    assert_eq!(dev.state, before);
+}
+
+#[test]
+fn the_manager_asks_under_its_new_host() {
+    use crate::daemon::media::tests::{Records, advert};
+    use crate::subscribe::Action;
+    let cfg = config();
+    let mut m = manager_of(&cfg);
+    m.set_host("stage-left");
+    let mut subs = vec![None; cfg.rx.len()];
+    subs[0] = Some(sub("TX 1", "peer-device"));
+    m.load(&subs);
+    let records = Records::default().with(
+        "peer-device",
+        "TX 1",
+        advert(std::net::SocketAddrV4::new(Ipv4Addr::LOCALHOST, 4455), 1),
+    );
+    let actions = m.tick(1, &[0; crate::subscribe::MAX_FLOWS], &records);
+    let Some(Action::Request { req, .. }) = actions.first() else {
+        panic!("{actions:?}");
+    };
+    assert_eq!(req.rx_host, "stage-left");
 }

@@ -255,6 +255,11 @@ pub struct Manager {
 }
 
 impl Manager {
+    /// Our device's name changed: the next flow requests carry `host`.
+    pub fn set_host(&mut self, host: &str) {
+        self.host = host.to_string();
+    }
+
     /// The manager of the device `cfg` named `host` at `ip`, whose flow
     /// slots receive on `ports`; no subscription yet.
     pub fn new(cfg: &DeviceConfig, host: &str, ip: Ipv4Addr, ports: [u16; MAX_FLOWS]) -> Self {

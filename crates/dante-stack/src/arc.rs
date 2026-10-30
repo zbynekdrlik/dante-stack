@@ -17,6 +17,8 @@
 //! | op1 | answer |
 //! |---|---|
 //! | 0x1000 | counts: TX, RX, inferno's 32 TX and 32 RX flows |
+//! | 0x1001 | the device's new name (netaudio's `set_name`): OK, no body; saved, |
+//! |        | announced, our own subscriptions to it renamed |
 //! | 0x1002 | the device name |
 //! | 0x1003 | the device names: current, factory, board, revision |
 //! | 0x1100, 0x1102 | zeros, as inferno answers Dante Controller |
@@ -33,8 +35,7 @@
 //! | 0x3200 | RX flows, [`FLOW_PAGE`] slots a page (inferno's `query_rx_flows`) |
 //! | 0x3300 | the fixed 8 bytes that keep Dante Controller from a clock-domain warning |
 //!
-//! No reply, as from inferno, to any other opcode (0x2204 and 0x1001
-//! among them), to a request whose op2 is not 0, and to a body inferno
+//! No reply, as from inferno, to any other opcode (0x2204 among them), to a request whose op2 is not 0, and to a body inferno
 //! fails to read before it answers (0x2201 under 2 bytes, 0x2202 under 4,
 //! 0x3010 whose items are cut, 0x3014 under 6): [`ArcOutcome::Unanswered`].
 //! A datagram that is no request ([`Header::parse`]) is dropped; one whose
@@ -88,6 +89,7 @@ use crate::cmc::PROCESS_ID;
 use crate::ctl::{Requests, header_op};
 use crate::device::{
     Device, DeviceConfig, DeviceState, Subscription, channel_problems, valid_channel_name,
+    valid_device_name,
 };
 use crate::info::Changes;
 use crate::media::tx::{TxShared, TxTable};
@@ -111,6 +113,8 @@ pub const GAP_CHECK: Duration = Duration::from_secs(1);
 /// The opcodes (op1) phase A answers.
 pub mod op {
     pub const COUNTS: u16 = 0x1000;
+    /// The device's new name (netaudio's `set_name`; inferno answers none).
+    pub const DEVICE_RENAME: u16 = 0x1001;
     pub const DEVICE_NAME: u16 = 0x1002;
     pub const DEVICE_NAMES: u16 = 0x1003;
     /// Asked by Dante Controller; inferno answers 110 zero bytes.
@@ -188,6 +192,9 @@ pub struct Change {
     /// RX channels (from 0) whose subscription changed: the manager takes
     /// them ([`Flows::subscribe`]), and the notification names them.
     pub subscriptions: Vec<usize>,
+    /// The device's own name changed: the records are announced under it
+    /// and our flow requests carry it ([`Flows::renamed`]).
+    pub device_renamed: bool,
 }
 
 /// What a request comes to.
@@ -245,6 +252,8 @@ pub trait Flows: Send + Sync + 'static {
     /// Returns the RX channels whose status moved
     /// ([`Manager::changed`]).
     fn subscribe(&self, subs: &[Option<Subscription>]) -> Vec<usize>;
+    /// The device was renamed to `name`.
+    fn renamed(&self, name: &str);
 }
 
 /// The daemon's flows (plan Task 7): the TX side's table and the manager.
@@ -268,6 +277,13 @@ impl Flows for Running {
         let mut rx = self.rx.lock().unwrap_or_else(PoisonError::into_inner);
         rx.load(subs);
         rx.changed()
+    }
+
+    fn renamed(&self, name: &str) {
+        self.rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_host(name);
     }
 }
 
@@ -327,6 +343,7 @@ pub fn handle(
             ok(&out.into_vec())
         }
         op::DEVICE_NAMES => ok(&device_names(state, cfg)),
+        op::DEVICE_RENAME => device_rename(&h, body, state),
         op::ZEROS_1100 => ok(&[0; 110]),
         op::ZEROS_1102 => ok(&[0; 94]),
         op::TX_CHANNELS => tx_channels(&h, body, cfg),
@@ -397,6 +414,11 @@ pub async fn serve<F: Flows>(
                 let (outcome, moved) = {
                     let mut device = shared.lock().unwrap_or_else(PoisonError::into_inner);
                     let outcome = flows.view(|live| respond(&mut device, live, &buf[..n]));
+                    if let ArcOutcome::Changed(_, c) = &outcome
+                        && c.device_renamed
+                    {
+                        flows.renamed(&device.state.name);
+                    }
                     let moved = match &outcome {
                         ArcOutcome::Changed(_, c) if !c.subscriptions.is_empty() => {
                             flows.subscribe(&device.state.subscriptions)
@@ -444,6 +466,51 @@ pub async fn serve<F: Flows>(
             );
         }
     }
+}
+
+/// 0x1001 (netaudio's `set_name`): the body is the new name, NUL-ended. A
+/// name Dante holds ([`valid_device_name`]) becomes the device's (saved,
+/// announced, carried by our flow requests); the same name again changes
+/// nothing; anything else is refused.
+fn device_rename(h: &Header, body: &[u8], state: &mut DeviceState) -> ArcOutcome {
+    let Some(end) = body.iter().position(|&b| b == 0) else {
+        return refuse(h, "a device name without its NUL");
+    };
+    let Some(name) = std::str::from_utf8(&body[..end])
+        .ok()
+        .filter(|n| valid_device_name(n))
+    else {
+        return refuse(h, "not a name Dante holds");
+    };
+    if name == state.name {
+        return ArcOutcome::Reply(reply(h, STATUS_OK, &[]));
+    }
+    // Our own RX subscribed to our own TX follow the name; a foreign
+    // receiver's subscription to the old name is its owner's (a renamed
+    // Dante device loses those everywhere).
+    let mut moved = Vec::new();
+    for (rx, sub) in state.subscriptions.iter_mut().enumerate() {
+        if let Some(sub) = sub
+            && sub.tx_device.eq_ignore_ascii_case(&state.name)
+        {
+            sub.tx_device = name.to_string();
+            moved.push(rx);
+        }
+    }
+    info!(
+        name,
+        own_subscriptions = moved.len(),
+        "the device renamed by ARC (0x1001)"
+    );
+    state.name = name.to_string();
+    ArcOutcome::Changed(
+        reply(h, STATUS_OK, &[]),
+        Change {
+            subscriptions: moved,
+            device_renamed: true,
+            ..Change::default()
+        },
+    )
 }
 
 fn refuse(h: &Header, why: &str) -> ArcOutcome {
