@@ -1,6 +1,6 @@
 //! A whole device on the test-only system clock (dante-asio's CI E2E: a
 //! GitHub-hosted runner has no dantesync and no PTP network). The real
-//! host is prepared on the box's first non-loopback IPv4 address (the
+//! host is prepared on the box's IPv4 address on its default route (the
 //! production checks stay: no loopback, a real MAC) with
 //! `ClockSource::System` and a state
 //! file that subscribes RX 1 to our own TX 1 (resolved from our own
@@ -10,6 +10,7 @@
 
 #![cfg(any(target_os = "linux", windows))]
 
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -50,6 +51,20 @@ fn device_in(dir: &Path) -> PathBuf {
     path
 }
 
+/// The box's IPv4 address on its default route: the adapter a runner
+/// really uses (not a virtual or down one). Connecting a UDP socket picks
+/// the route and sends nothing.
+fn routed_ipv4() -> Ipv4Addr {
+    let probe = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).expect("a UDP socket");
+    probe
+        .connect((Ipv4Addr::new(192, 0, 2, 1), 9))
+        .expect("a default route on this box");
+    match probe.local_addr().expect("the routed address") {
+        SocketAddr::V4(a) if !a.ip().is_loopback() && !a.ip().is_unspecified() => *a.ip(),
+        other => panic!("no routed IPv4 address on this box: {other}"),
+    }
+}
+
 /// The number after `"key":` in the first object of `json` that starts
 /// with `head`, if any.
 fn field(json: &str, head: &str, key: &str) -> Option<u64> {
@@ -65,12 +80,7 @@ fn field(json: &str, head: &str, key: &str) -> Option<u64> {
 #[test]
 fn our_tx_reaches_our_rx_clean_on_the_system_clock() {
     let dir = tempfile::tempdir().unwrap();
-    let ip = host::interfaces()
-        .expect("the box's interfaces")
-        .into_iter()
-        .map(|a| a.ip)
-        .find(|ip| !ip.is_loopback() && !ip.is_link_local())
-        .expect("a non-loopback IPv4 address on this box");
+    let ip = routed_ipv4();
     let opts = Options {
         config: device_in(dir.path()),
         place: Place::Ip(ip),
@@ -81,6 +91,7 @@ fn our_tx_reaches_our_rx_clean_on_the_system_clock() {
     // Ready at once: no dantesync.
     let status = ctl::answer("status", &media);
     assert_eq!(field(&status, "\"clock\":", "ready"), Some(1), "{status}");
+    assert!(status.contains("\"source\":\"system\"}"), "{status}");
     assert_eq!(ctl::answer("source 1 counter", &media), "ok");
     assert_eq!(ctl::answer("check 1 counter", &media), "ok");
     let stop = Arc::new(AtomicBool::new(false));
