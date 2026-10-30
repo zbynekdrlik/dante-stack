@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 iemmixer contributors.
 
-//! The `iem-dante-dev` daemon (#72 phase A, plan Task 5): its command line,
+//! The device daemon (iemmixer #72 phase A, plan Task 5): its command line,
 //! the address it serves on, and the loop that serves the device.
 //!
 //! - [`parse_args`]: `--config <path>` and one of `--iface <name>` or `--ip
-//!   <IPv4>`; `--version` ([`version_line`]: the workspace version and the
+//!   <IPv4>`; `--version` ([`Build::line`]: the binary's name, its version and the
 //!   build's commit, CI's `GITHUB_SHA`, "local" otherwise); `clock
 //!   --seconds <n>` (phase B, plan Task 2): the media clock's polls of
 //!   dantesync, one JSON line each ([`ClockLines`]), serving nothing;
@@ -105,13 +105,19 @@ impl Build {
     }
 }
 
+/// [`USAGE`] for the binary called `name`.
+pub fn usage(name: &str) -> String {
+    USAGE.replace(NAME, name)
+}
+
+/// The `--help` text, naming [`NAME`]; [`usage`] names another binary.
 pub const USAGE: &str = "\
-usage: iem-dante-dev --config <path> (--iface <name> | --ip <IPv4 address>)
+usage: dante-stack-dev --config <path> (--iface <name> | --ip <IPv4 address>)
                      [--control <socket path>]
-       iem-dante-dev ctl [--socket <path>] <request>
-       iem-dante-dev clock --seconds <n>
-       iem-dante-dev health [--socket <path>] [--server-port <n>]
-       iem-dante-dev --version
+       dante-stack-dev ctl [--socket <path>] <request>
+       dante-stack-dev clock --seconds <n>
+       dante-stack-dev health [--socket <path>] [--server-port <n>]
+       dante-stack-dev --version
 
 Our own Dante device (Gen 3, #72): ARC on UDP 4440, CMC on UDP 8800, the
 info requests on UDP 8700 and flow control on UDP 4455 at the interface's

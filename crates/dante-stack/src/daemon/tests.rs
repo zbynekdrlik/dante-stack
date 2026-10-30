@@ -242,6 +242,15 @@ fn the_version_line_names_the_binary_its_version_and_the_build() {
     assert_eq!(app.line(), "iem-dante-dev 9.8.7 abc123");
     assert_eq!(build_sha(Some("abc123")), "abc123");
     assert_eq!(build_sha(None), "local");
+}
+
+#[test]
+fn the_usage_names_the_binary_that_prints_it() {
+    assert!(USAGE.starts_with("usage: dante-stack-dev --config"));
+    let theirs = usage("iem-dante-dev");
+    assert!(theirs.starts_with("usage: iem-dante-dev --config"));
+    assert!(theirs.contains("       iem-dante-dev --version"));
+    assert!(!theirs.contains(NAME));
     assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
     match option_env!("GITHUB_SHA") {
         Some(sha) => assert_eq!(BUILD, sha),

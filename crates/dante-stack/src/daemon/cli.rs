@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 iemmixer contributors.
 
-//! The device binary's command line (`--help`: [`super::USAGE`]), Linux
+//! The device binary's command line (`--help`: [`super::usage`]), Linux
 //! only, as a library function: Cargo never builds a dependency's binaries,
 //! so each application keeps a thin binary that calls [`main`] with its own
 //! [`Build`] (dante-stack's `dante-stack-dev`, iemmixer's `iem-dante-dev`).
@@ -13,7 +13,7 @@
 //! interface's MAC cannot be read, serving failed or the goodbyes were not
 //! confirmed; 2 for the command line, the config, the state file or an
 //! interface without a usable MAC. `clock`, `ctl` and `health` are
-//! described in [`super::USAGE`].
+//! described in [`super::usage`].
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
-use super::{Build, ClockLines, Command, USAGE, ctl_succeeded, parse_args};
+use super::{Build, ClockLines, Command, ctl_succeeded, parse_args, usage};
 use crate::clock::{DANTESYNC, MonoClock, POLL, Poller};
 use crate::health;
 use crate::host::{self, Host, Signals};
@@ -41,7 +41,7 @@ pub fn main(build: Build) -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(Command::Help) => {
-            println!("{USAGE}");
+            println!("{}", usage(build.name));
             return ExitCode::SUCCESS;
         }
         Ok(Command::Clock { seconds }) => return clock(build.name, seconds),
@@ -49,7 +49,7 @@ pub fn main(build: Build) -> ExitCode {
         Ok(Command::Health(opts)) => return health_line(build, &opts),
         Ok(Command::Run(opts)) => opts,
         Err(msg) => {
-            eprintln!("{}: {msg}\n\n{USAGE}", build.name);
+            eprintln!("{}: {msg}\n\n{}", build.name, usage(build.name));
             return ExitCode::from(2);
         }
     };
@@ -115,7 +115,7 @@ fn clock(name: &str, seconds: u32) -> ExitCode {
 /// `health`: the box's verdict, one line on stdout, its state's exit
 /// code.
 fn health_line(build: Build, opts: &health::Options) -> ExitCode {
-    let verdict = health::check(opts, build.sha);
+    let verdict = health::check(opts, build);
     if let Err(e) = writeln!(std::io::stdout(), "{}", verdict.line()) {
         eprintln!("{} health: stdout: {e}", build.name);
         return ExitCode::from(1);

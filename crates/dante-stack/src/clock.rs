@@ -488,7 +488,7 @@ mod os {
             })
         }
 
-        /// One request and its reply (at most [`REPLY_TIMEOUT`]): the
+        /// One request and its reply (at most `REPLY_TIMEOUT`): the
         /// reply's frequency adjustment goes to `freq`, its sample to the
         /// tracker, and a first or a replaced k to `clock`.
         pub async fn once(&mut self, clock: &MonoClock, freq: &AtomicI32) -> Polled {

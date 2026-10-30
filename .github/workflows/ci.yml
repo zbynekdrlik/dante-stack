@@ -26,6 +26,10 @@ jobs:
         with:
           persist-credentials: false
       - run: cargo fmt --all --check
+      - name: Docs build without warnings (broken or private links)
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   test:
     strategy:

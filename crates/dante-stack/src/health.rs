@@ -409,7 +409,7 @@ fn pump_reasons(a: &Status, b: &Status, reasons: &mut Vec<Reason>) {
 
 /// The box's verdict from its units, two status reads a second apart
 /// (`first`, `second`; `None` for a read without a status), the server's
-/// answer, this binary's build (`crate::daemon::BUILD`) and
+/// answer, the build the server must name (the binary's [`crate::daemon::Build`]) and
 /// `CLOCK_MONOTONIC` in µs taken with the units. Pure.
 ///
 /// - Stopped: all three units inactive; no reason.
@@ -604,8 +604,8 @@ mod glue {
 
     /// The whole check: the units with the monotonic time, the two reads a
     /// second apart, the server; then [`verdict`].
-    pub fn check(opts: &Options, build: &str) -> Verdict {
-        let units = parse_units(&systemctl_show());
+    pub fn check(opts: &Options, build: crate::daemon::Build) -> Verdict {
+        let units = parse_units(&systemctl_show(build.name));
         let now_us = u64::try_from(crate::clock::monotonic_ns() / 1_000).unwrap_or(0);
         let first = read_status(&opts.socket, STATUS_WAIT);
         std::thread::sleep(READ_APART);
@@ -619,14 +619,14 @@ mod glue {
             first.as_ref(),
             second.as_ref(),
             &server,
-            build,
+            build.sha,
             now_us,
         )
     }
 
     /// `systemctl show` of the three units' [`PROPERTIES`]; empty when
     /// systemctl cannot run (every unit then reads `other`).
-    fn systemctl_show() -> String {
+    fn systemctl_show(name: &str) -> String {
         match Command::new("systemctl")
             .arg("show")
             .arg(format!("--property={PROPERTIES}"))
@@ -635,7 +635,7 @@ mod glue {
         {
             Ok(out) => String::from_utf8_lossy(&out.stdout).into_owned(),
             Err(e) => {
-                eprintln!("iem-dante-dev health: systemctl did not run: {e}");
+                eprintln!("{name} health: systemctl did not run: {e}");
                 String::new()
             }
         }

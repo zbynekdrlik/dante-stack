@@ -521,7 +521,7 @@ impl DeviceState {
     /// ones (no subscription); its channels keep their names and
     /// subscriptions. One with more is cut to the config's count, but only
     /// when every channel cut off is at its default name
-    /// ([`default_past`]) and, for RX, no subscription past the count is
+    /// (`default_past`) and, for RX, no subscription past the count is
     /// held: else nothing changes and the problems name the kind and the
     /// first channel by number (never a name). `None` when the counts
     /// already fit.
