@@ -3,8 +3,14 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/zbynekdrlik/dante-stack"
 authors = ["zbynekdrlik"]
+
+# cargo-mutants builds every mutant with this profile (.cargo/mutants.toml):
+# the test profile without debug info, so each mutant builds faster.
+[profile.mutants]
+inherits = "test"
+debug = "none"

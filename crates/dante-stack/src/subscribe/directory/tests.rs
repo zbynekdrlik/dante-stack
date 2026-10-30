@@ -936,7 +936,7 @@ fn a_dead_device_read_by_the_reader_stays_unresolved_and_is_counted() {
         lock(&arc.shared.book)
             .records
             .get("card")
-            .is_some_and(|r| r.dbc.is_some())
+            .is_some_and(|r| r.arc.is_some() && r.dbc.is_some())
     });
     // One lookup and no other: its want alone wakes the reader.
     assert_eq!(arc.lookup("card", "01"), None);
