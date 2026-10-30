@@ -88,15 +88,14 @@ fn our_tx_reaches_our_rx_clean_on_the_system_clock() {
         .start(Signals::Report(Arc::clone(&stop)))
         .expect("the device started");
     let start = Instant::now();
-    let mut last = String::new();
-    let clean = loop {
-        last = ctl::answer("status", &media);
+    let (clean, last) = loop {
+        let last = ctl::answer("status", &media);
         let checked = field(&last, "\"checks\":[{", "checked").unwrap_or(0);
         if checked >= 96_000 {
-            break true;
+            break (true, last);
         }
         if start.elapsed() > BOUND || host.ended().is_some() {
-            break false;
+            break (false, last);
         }
         std::thread::sleep(Duration::from_millis(100));
     };
