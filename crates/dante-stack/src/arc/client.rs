@@ -344,8 +344,14 @@ impl<'a> Udp<'a> {
     }
 }
 
-impl Exchange for Udp<'_> {
-    fn ask(&mut self, op1: u16, start: u16) -> Result<(u16, Vec<u8>), ReadError> {
+impl Udp<'_> {
+    /// One request built by `datagram` (from its sequence number) for
+    /// `op1`, and the wait for its reply: its status and body.
+    fn exchange(
+        &mut self,
+        op1: u16,
+        datagram: impl FnOnce(u16) -> Vec<u8>,
+    ) -> Result<(u16, Vec<u8>), ReadError> {
         if self.stop.load(Ordering::Relaxed) {
             return Err(ReadError::Stopped);
         }
@@ -356,7 +362,7 @@ impl Exchange for Udp<'_> {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
         self.peer = self.requests.sent(self.to, op1);
         self.sent += 1;
-        self.sock.send(&page_request(seq, op1, start)).map_err(io)?;
+        self.sock.send(&datagram(seq)).map_err(io)?;
         let deadline = Instant::now() + self.wait;
         let mut buf = [0u8; RECV_BUFFER];
         loop {
@@ -382,6 +388,18 @@ impl Exchange for Udp<'_> {
                 Err(e) => return Err(io(e)),
             }
         }
+    }
+}
+
+impl Exchange for Udp<'_> {
+    fn ask(&mut self, op1: u16, start: u16) -> Result<(u16, Vec<u8>), ReadError> {
+        self.exchange(op1, |seq| page_request(seq, op1, start))
+    }
+}
+
+impl super::control::Call for Udp<'_> {
+    fn call(&mut self, op1: u16, body: &[u8]) -> Result<(u16, Vec<u8>), ReadError> {
+        self.exchange(op1, |seq| request(START, seq, op1, 0, body))
     }
 }
 
