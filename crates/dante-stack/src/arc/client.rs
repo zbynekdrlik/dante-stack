@@ -192,7 +192,7 @@ pub struct Page<T> {
 
 /// The page table of `body` with `item`-byte descriptors: its slots and
 /// count; `None` when the count passes the slots or the table the body.
-fn table(body: &[u8], item: usize) -> Option<(usize, usize)> {
+pub(crate) fn table(body: &[u8], item: usize) -> Option<(usize, usize)> {
     let (&slots, &count) = (body.first()?, body.get(1)?);
     let (slots, count) = (usize::from(slots), usize::from(count));
     (count <= slots && 2 + slots * item <= body.len()).then_some((slots, count))
@@ -257,6 +257,12 @@ pub fn read_directory(ex: &mut impl Exchange) -> Result<Directory, ReadError> {
         });
     }
     let total = usize::from(read_u16(&body, 2).ok_or(ReadError::Malformed { op: op::COUNTS })?);
+    read_tx(ex, total)
+}
+
+/// The TX channels of a device with `total` of them (its counts already
+/// read): the 0x2000 pages, then (with any channel) the 0x2010 pages.
+pub(crate) fn read_tx(ex: &mut impl Exchange, total: usize) -> Result<Directory, ReadError> {
     let channels = read_list(ex, op::TX_CHANNELS, total, tx_channels)?;
     let names = if channels.is_empty() {
         Vec::new()
@@ -268,7 +274,7 @@ pub fn read_directory(ex: &mut impl Exchange) -> Result<Directory, ReadError> {
 
 /// The items of the list `op1`, page after page (see the module), of a
 /// device with `total` TX channels.
-fn read_list<T>(
+pub(crate) fn read_list<T>(
     ex: &mut impl Exchange,
     op1: u16,
     total: usize,

@@ -35,18 +35,16 @@ use std::collections::BTreeMap;
 
 use tracing::debug;
 
-use super::client::{Directory, Exchange, ReadError, START, page_request, read_directory};
+use super::client::{Exchange, Page, ReadError, START, page_request, read_list, read_tx, table};
 use super::op;
 use crate::wire::{HEADER_LEN, STATUS_MORE, STATUS_OK, read_u16, request, string_at};
 
-/// The device's own name (netaudio's `device_name`).
-pub const GET_NAME: u16 = 0x1002;
+/// The device's own name (netaudio's `device_name`; [`op::DEVICE_NAME`]).
+pub const GET_NAME: u16 = op::DEVICE_NAME;
 /// The device's rename (netaudio's `set_name`).
 pub const SET_NAME: u16 = 0x1001;
 /// A 0x3000 descriptor's size.
 const RX_ITEM: usize = 20;
-/// The most pages an RX list is read in (512 channels at 16 a page).
-const MAX_PAGES: usize = 32;
 
 /// A channel's direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +154,7 @@ pub fn labels(c: &mut impl Call) -> Result<Labels, ReadError> {
     let malformed = ReadError::Malformed { op: op::COUNTS };
     let tx_count = usize::from(read_u16(&counts, 2).ok_or(malformed)?);
     let rx_count = usize::from(read_u16(&counts, 4).ok_or(malformed)?);
-    let directory: Directory = read_directory(&mut Pages(c))?;
+    let directory = read_tx(&mut Pages(c), tx_count)?;
     let tx = directory
         .channels()
         .iter()
@@ -171,52 +169,31 @@ pub fn labels(c: &mut impl Call) -> Result<Labels, ReadError> {
     })
 }
 
+/// A page of 0x3000 (the RX channels) with status `status`: each item's id
+/// and name (a channel without a name is counted, not listed).
+fn rx_page(status: u16, body: &[u8]) -> Option<Page<(u16, String)>> {
+    let (slots, count) = table(body, RX_ITEM)?;
+    let items = (0..count)
+        .filter_map(|i| {
+            let at = 2 + i * RX_ITEM;
+            let id = read_u16(body, at).filter(|&id| id > 0)?;
+            let name = string_at(body, read_u16(body, at + 10)?).filter(|n| !n.is_empty())?;
+            Some((id, name.to_string()))
+        })
+        .collect();
+    Some(Page {
+        more: status == STATUS_MORE,
+        slots,
+        count,
+        items,
+    })
+}
+
 /// The RX channels' labels of a device with `total` RX channels.
 fn rx_names(c: &mut impl Call, total: usize) -> Result<BTreeMap<u16, String>, ReadError> {
-    let mut out = BTreeMap::new();
-    let mut counted = 0;
-    let mut start: u16 = 1;
-    for _ in 0..MAX_PAGES {
-        if counted >= total {
-            break;
-        }
-        let page = page_request(0, op::RX_CHANNELS, start);
-        let (status, body) = c.call(op::RX_CHANNELS, body_of(&page))?;
-        if status != STATUS_OK && status != STATUS_MORE {
-            return Err(ReadError::Refused {
-                op: op::RX_CHANNELS,
-                status,
-            });
-        }
-        let malformed = ReadError::Malformed {
-            op: op::RX_CHANNELS,
-        };
-        let (&slots, &count) = (
-            body.first().ok_or(malformed)?,
-            body.get(1).ok_or(malformed)?,
-        );
-        let (slots, count) = (usize::from(slots), usize::from(count));
-        if count > slots || 2 + slots * RX_ITEM > body.len() {
-            return Err(malformed);
-        }
-        for i in 0..count {
-            let at = 2 + i * RX_ITEM;
-            let id = read_u16(&body, at).filter(|&id| id > 0);
-            let name = read_u16(&body, at + 10).and_then(|off| string_at(&body, off));
-            if let (Some(id), Some(name)) = (id, name.filter(|n| !n.is_empty())) {
-                out.insert(id, name.to_string());
-            }
-        }
-        counted += count;
-        if count == 0 || !(status == STATUS_MORE || count == slots) {
-            break;
-        }
-        match u16::try_from(usize::from(start) + count) {
-            Ok(next) => start = next,
-            Err(_) => break,
-        }
-    }
-    Ok(out)
+    Ok(read_list(&mut Pages(c), op::RX_CHANNELS, total, rx_page)?
+        .into_iter()
+        .collect())
 }
 
 /// Sets `dir`'s channel `channel` to `label` (`None`: its default).

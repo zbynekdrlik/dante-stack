@@ -126,11 +126,19 @@ fn read_gives_the_name_counts_and_labels() {
     let mut own = Own::new();
     let name = own.cfg.name.clone();
     let out = read(&mut own, &name).unwrap();
-    assert_eq!(out["name"], name.as_str());
-    assert_eq!(out["tx_count"], own.cfg.tx.len());
-    assert_eq!(out["rx_count"], own.cfg.rx.len());
-    assert_eq!(out["tx"]["1"], own.cfg.tx[0].as_str());
-    assert_eq!(out["rx"]["2"], own.cfg.rx[1].as_str());
+    assert_eq!(out.name, name);
+    assert_eq!(out.tx_count, own.cfg.tx.len());
+    assert_eq!(out.rx_count, own.cfg.rx.len());
+    assert_eq!(out.tx[&1], own.cfg.tx[0]);
+    assert_eq!(out.rx[&2], own.cfg.rx[1]);
+    // Keys in dante_card.py's order, labels by number.
+    let line = serde_json::to_string(&out).unwrap();
+    assert!(line.starts_with("{\"name\":"), "{line}");
+    assert!(
+        line.find("\"rx_count\"") < line.find("\"tx_count\""),
+        "{line}"
+    );
+    assert!(line.contains("\"tx\":{\"1\":"), "{line}");
 }
 
 #[test]
@@ -178,13 +186,18 @@ fn write_sends_in_order_and_reads_back() {
     .unwrap();
     let flag = std::env::temp_dir().join("dante-stack-card-never");
     let out = write(&mut own, &name, &flag, &changes).unwrap();
-    assert_eq!(out["sent"].as_array().unwrap().len(), 2);
-    assert!(out["failed"].is_null());
-    assert!(out["error"].is_null(), "{out}");
-    assert_eq!(out["read_back"], true);
-    assert_eq!(out["mismatches"], serde_json::json!([]));
-    assert_eq!(out["rx"]["2"], "Vox L");
-    assert_eq!(out["tx"]["1"], "Click");
+    assert_eq!(out.sent.len(), 2);
+    assert!(out.failed.is_none());
+    assert!(out.error.is_none(), "{out:?}");
+    assert!(out.read_back);
+    assert!(out.mismatches.is_empty());
+    assert_eq!(out.rx.as_ref().unwrap()[&2], "Vox L");
+    assert_eq!(out.tx.as_ref().unwrap()[&1], "Click");
+    let line = serde_json::to_string(&out).unwrap();
+    assert!(
+        line.starts_with("{\"sent\":[{\"type\":\"rx\",\"channel\":2,\"label\":\"Vox L\"}"),
+        "{line}"
+    );
     assert_eq!(own.state.rx[1], "Vox L");
 }
 
@@ -197,8 +210,11 @@ fn the_flag_stops_the_writes() {
     std::fs::write(&flag, "").unwrap();
     let changes = parse_changes(r#"[{"type":"rx","channel":2,"label":"Vox L"}]"#).unwrap();
     let out = write(&mut own, &name, &flag, &changes).unwrap();
-    assert_eq!(out["sent"], serde_json::json!([]));
-    assert!(out["error"].as_str().unwrap().contains("appeared"), "{out}");
+    assert!(out.sent.is_empty());
+    assert!(
+        out.error.as_deref().unwrap().contains("appeared"),
+        "{out:?}"
+    );
     assert_eq!(own.state.rx[1], own.cfg.rx[1]);
 }
 
@@ -228,16 +244,16 @@ fn a_refused_write_stops_the_rest_and_is_reported() {
     ];
     let flag = std::env::temp_dir().join("dante-stack-card-never");
     let out = write(&mut own, &name, &flag, &changes).unwrap();
-    assert_eq!(out["sent"].as_array().unwrap().len(), 1, "{out}");
-    assert_eq!(out["failed"]["channel"], 2, "{out}");
+    assert_eq!(out.sent.len(), 1, "{out:?}");
+    assert_eq!(out.failed.as_ref().map(|c| c.channel), Some(2), "{out:?}");
     assert!(
-        out["error"]
-            .as_str()
+        out.error
+            .as_deref()
             .unwrap()
             .contains("writing rx 2 failed"),
-        "{out}"
+        "{out:?}"
     );
-    assert_eq!(out["read_back"], true);
+    assert!(out.read_back);
     assert_eq!(own.state.rx[3], own.cfg.rx[3], "the rest is not written");
 }
 
@@ -246,10 +262,10 @@ fn rename_against_a_device_that_does_not_answer_it_is_reported() {
     let mut own = Own::new();
     let name = own.cfg.name.clone();
     let out = rename(&mut own, &name, "new-name").unwrap();
-    assert_eq!(out["renamed"], false);
-    assert_eq!(out["name"], name.as_str());
+    assert!(!out.renamed);
+    assert_eq!(out.name.as_deref(), Some(name.as_str()));
     assert!(
-        out["error"].as_str().unwrap().contains("renaming failed"),
-        "{out}"
+        out.error.as_deref().unwrap().contains("renaming failed"),
+        "{out:?}"
     );
 }

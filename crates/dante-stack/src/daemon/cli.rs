@@ -161,10 +161,18 @@ fn card(name: &str, args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    let line = |out: Result<String, serde_json::Error>| {
+        out.unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+    };
     let out = match &parsed.verb {
-        Verb::Read => card::read(&mut udp, &parsed.expected),
-        Verb::Write(flag) => card::write(&mut udp, &parsed.expected, flag, &changes),
-        Verb::Rename(new) => card::rename(&mut udp, &parsed.expected, new),
+        Verb::Read => {
+            card::read(&mut udp, &parsed.expected).map(|o| line(serde_json::to_string(&o)))
+        }
+        Verb::Write(flag) => card::write(&mut udp, &parsed.expected, flag, &changes)
+            .map(|o| line(serde_json::to_string(&o))),
+        Verb::Rename(new) => {
+            card::rename(&mut udp, &parsed.expected, new).map(|o| line(serde_json::to_string(&o)))
+        }
     };
     match out {
         Ok(line) => {

@@ -17,8 +17,9 @@
 //! channel its counts promise). A label equal to the channel's number
 //! resets it to the default. Once writing starts the verb always ends with
 //! one JSON line and exit 0: `<flag>` (an absolute path) appearing stops
-//! the writes; the first refused write stops them; then a fresh read says
-//! what the device holds. Exit 1: no answer, another device, an incomplete
+//! the writes; the first write the device refuses or does not answer stops
+//! them (`failed`; stricter than netaudio, which counted an unanswered
+//! write as sent); then a fresh read says what the device holds. Exit 1: no answer, another device, an incomplete
 //! read or a channel it lacks (nothing written); 2: usage. Nothing but the
 //! labels and (rename) the device's own name of that one device is ever
 //! changed.
@@ -28,9 +29,8 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::arc::client::ReadError;
 use crate::arc::control::{self, Call, Dir, Labels};
 use crate::device::{valid_channel_name, valid_device_name};
 
@@ -94,7 +94,14 @@ pub fn parse(args: &[String]) -> Result<Card, String> {
     }
     let ip = unicast(&args[1]).ok_or("<ip> is not a unicast IPv4 address")?;
     let expected = args[2].clone();
-    if expected.is_empty() || !expected.chars().all(|c| !c.is_control()) {
+    // Python's isprintable(): no control or format character, no
+    // whitespace but the space.
+    let printable = |c: char| {
+        !c.is_control()
+            && (c == ' ' || !c.is_whitespace())
+            && !matches!(c, '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2064}' | '\u{feff}')
+    };
+    if expected.is_empty() || !expected.chars().all(printable) {
         return Err("<expected-name> is empty or not printable".into());
     }
     let verb = match verb {
@@ -187,52 +194,85 @@ fn connect(c: &mut impl Call, expected: &str) -> Result<Labels, Refused> {
     }
     let labels =
         control::labels(c).map_err(|e| Refused(format!("incomplete read of the card ({e})")))?;
-    for (kind, count, have) in [
-        ("tx", labels.tx_count, labels.tx.len()),
-        ("rx", labels.rx_count, labels.rx.len()),
-    ] {
-        if count == 0 || have != count {
-            return Err(Refused(format!(
-                "incomplete read of the card's {kind} channels"
-            )));
-        }
+    if !labels.complete() {
+        let kind = if labels.tx_count == 0 || labels.tx.len() != labels.tx_count {
+            "tx"
+        } else {
+            "rx"
+        };
+        return Err(Refused(format!(
+            "incomplete read of the card's {kind} channels"
+        )));
     }
     Ok(labels)
 }
 
-fn label_map(labels: &BTreeMap<u16, String>) -> Value {
-    Value::Object(
-        labels
-            .iter()
-            .map(|(n, l)| (n.to_string(), Value::String(l.clone())))
-            .collect(),
-    )
+/// `card read`'s line (keys in dante_card.py's order, labels by number).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReadOut {
+    pub name: String,
+    pub rx_count: usize,
+    pub tx_count: usize,
+    pub tx: BTreeMap<u16, String>,
+    pub rx: BTreeMap<u16, String>,
+}
+
+/// A sent or failed change whose label did not read back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Mismatch {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub channel: u16,
+    pub want: String,
+    pub got: Option<String>,
+}
+
+/// `card write`'s line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WriteOut {
+    /// The changes the device accepted (status OK), in order.
+    pub sent: Vec<Change>,
+    /// The change that was refused or got no answer, which ended the writes.
+    pub failed: Option<Change>,
+    pub error: Option<String>,
+    pub read_back: bool,
+    pub mismatches: Vec<Mismatch>,
+    pub tx: Option<BTreeMap<u16, String>>,
+    pub rx: Option<BTreeMap<u16, String>>,
+}
+
+/// `card rename`'s line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RenameOut {
+    pub renamed: bool,
+    pub name: Option<String>,
+    pub error: Option<String>,
 }
 
 /// `card read`.
-pub fn read(c: &mut impl Call, expected: &str) -> Result<Value, Refused> {
+pub fn read(c: &mut impl Call, expected: &str) -> Result<ReadOut, Refused> {
     let labels = connect(c, expected)?;
-    Ok(json!({
-        "name": expected,
-        "rx_count": labels.rx_count,
-        "tx_count": labels.tx_count,
-        "tx": label_map(&labels.tx),
-        "rx": label_map(&labels.rx),
-    }))
+    Ok(ReadOut {
+        name: expected.to_string(),
+        rx_count: labels.rx_count,
+        tx_count: labels.tx_count,
+        tx: labels.tx,
+        rx: labels.rx,
+    })
 }
 
-fn reason(e: &ReadError) -> String {
-    e.to_string()
+fn joined(errors: Vec<String>) -> Option<String> {
+    (!errors.is_empty()).then(|| errors.join("; "))
 }
 
 /// `card write`: the changes in order until `flag` appears or one is
-/// refused, then the read back.
+/// refused (or unanswered), then the read back.
 pub fn write(
     c: &mut impl Call,
     expected: &str,
     flag: &Path,
     changes: &[Change],
-) -> Result<Value, Refused> {
+) -> Result<WriteOut, Refused> {
     let held =
         connect(c, expected).map_err(|e| Refused(format!("{}: nothing was written", e.0)))?;
     if let Some(m) = changes
@@ -244,8 +284,8 @@ pub fn write(
             m.kind, m.channel
         )));
     }
-    let mut sent: Vec<&Change> = Vec::new();
-    let mut failed: Option<&Change> = None;
+    let mut sent: Vec<Change> = Vec::new();
+    let mut failed: Option<Change> = None;
     let mut errors = Vec::new();
     for ch in changes {
         if flag.exists() {
@@ -259,17 +299,16 @@ pub fn write(
         }
         let label = (ch.label != ch.channel.to_string()).then_some(ch.label.as_str());
         match control::rename_channel(c, ch.dir(), ch.channel, label) {
-            Ok(()) => sent.push(ch),
+            Ok(()) => sent.push(ch.clone()),
             Err(e) => {
-                failed = Some(ch);
                 errors.push(format!(
-                    "writing {} {} failed ({}): writing stopped after {} of {} labels",
+                    "writing {} {} failed ({e}): writing stopped after {} of {} labels",
                     ch.kind,
                     ch.channel,
-                    reason(&e),
                     sent.len(),
                     changes.len()
                 ));
+                failed = Some(ch.clone());
                 break;
             }
         }
@@ -283,35 +322,42 @@ pub fn write(
     };
     let mut mismatches = Vec::new();
     if let Some(after) = &after {
-        for ch in sent.iter().copied().chain(failed) {
+        for ch in sent.iter().chain(&failed) {
             // dante_card.py's rule: what reads back must be the label sent
             // (a card's default label is its number, so a reset reads as
             // the number too).
             let got = after.get(ch.dir(), ch.channel);
             if got != Some(ch.label.as_str()) {
-                mismatches.push(
-                    json!({"type": ch.kind, "channel": ch.channel, "want": ch.label, "got": got}),
-                );
+                mismatches.push(Mismatch {
+                    kind: ch.kind,
+                    channel: ch.channel,
+                    want: ch.label.clone(),
+                    got: got.map(str::to_string),
+                });
             }
         }
     }
-    Ok(json!({
-        "sent": sent,
-        "failed": failed,
-        "error": if errors.is_empty() { Value::Null } else { Value::String(errors.join("; ")) },
-        "read_back": after.is_some(),
-        "mismatches": mismatches,
-        "tx": after.as_ref().map(|a| label_map(&a.tx)),
-        "rx": after.as_ref().map(|a| label_map(&a.rx)),
-    }))
+    let (tx, rx) = match after {
+        Some(a) => (Some(a.tx), Some(a.rx)),
+        None => (None, None),
+    };
+    Ok(WriteOut {
+        sent,
+        failed,
+        error: joined(errors),
+        read_back: tx.is_some(),
+        mismatches,
+        tx,
+        rx,
+    })
 }
 
 /// `card rename`: the new name, then the name the device holds.
-pub fn rename(c: &mut impl Call, expected: &str, new: &str) -> Result<Value, Refused> {
+pub fn rename(c: &mut impl Call, expected: &str, new: &str) -> Result<RenameOut, Refused> {
     connect(c, expected).map_err(|e| Refused(format!("{}: nothing was renamed", e.0)))?;
     let mut errors = Vec::new();
     if let Err(e) = control::rename_device(c, new) {
-        errors.push(format!("renaming failed ({})", reason(&e)));
+        errors.push(format!("renaming failed ({e})"));
     }
     let name = control::device_name(c).ok();
     match &name {
@@ -321,11 +367,11 @@ pub fn rename(c: &mut impl Call, expected: &str, new: &str) -> Result<Value, Ref
         }
         Some(_) => {}
     }
-    Ok(json!({
-        "renamed": name.as_deref() == Some(new),
-        "name": name,
-        "error": if errors.is_empty() { Value::Null } else { Value::String(errors.join("; ")) },
-    }))
+    Ok(RenameOut {
+        renamed: name.as_deref() == Some(new),
+        name,
+        error: joined(errors),
+    })
 }
 
 #[cfg(test)]

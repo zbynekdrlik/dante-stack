@@ -352,12 +352,12 @@ fn card_reads_and_writes_our_running_device() {
     let written = card::write(&mut udp, &name, &flag, &changes);
     let stopped = host.stop(Duration::from_secs(5));
     let read = read.expect("card read");
-    assert_eq!(read["rx"]["2"], rx2.as_str(), "{read}");
+    assert_eq!(read.rx[&2], rx2, "{read:?}");
     let written = written.expect("card write");
-    assert!(written["error"].is_null(), "{written}");
-    assert_eq!(written["mismatches"], serde_json::json!([]), "{written}");
-    assert_eq!(written["rx"]["2"], "Vox L");
-    assert_eq!(written["tx"]["1"], "Click");
+    assert!(written.error.is_none(), "{written:?}");
+    assert!(written.mismatches.is_empty(), "{written:?}");
+    assert_eq!(written.rx.as_ref().unwrap()[&2], "Vox L");
+    assert_eq!(written.tx.as_ref().unwrap()[&1], "Click");
     // The device saved the labels in its state file.
     let saved = std::fs::read_to_string(dir.path().join("state.toml")).unwrap();
     assert!(
