@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 iemmixer contributors.
+
+//! The device binary's command line (`--help`: [`super::usage`]), Linux
+//! only, as a library function: Cargo never builds a dependency's binaries,
+//! so each application keeps a thin binary that calls [`main`] with its own
+//! [`Build`] (dante-stack's `dante-stack-dev`, iemmixer's `iem-dante-dev`).
+//!
+//! The device itself is `crate::host`: here it is prepared with no engine
+//! channel and started with SIGTERM and SIGINT ending it
+//! (`host::Signals::Stop`). Exit codes (`host::exit_code`): 0 after a
+//! signal and the goodbyes; 1 when the address is not there (yet), the
+//! interface's MAC cannot be read, serving failed or the goodbyes were not
+//! confirmed; 2 for the command line, the config, the state file or an
+//! interface without a usable MAC. `clock`, `ctl` and `health` are
+//! described in [`super::usage`].
+
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::Path;
+use std::process::ExitCode;
+use std::sync::atomic::AtomicI32;
+use std::time::Duration;
+
+use super::{Build, ClockLines, Command, ctl_succeeded, parse_args, usage};
+use crate::clock::{DANTESYNC, MonoClock, POLL, Poller};
+use crate::health;
+use crate::host::{self, Host, Signals};
+use tokio::time::MissedTickBehavior;
+use tracing::error;
+use tracing_subscriber::EnvFilter;
+
+/// How long `ctl` waits for the device's answer.
+const CTL_WAIT: Duration = Duration::from_secs(5);
+
+pub fn main(build: Build) -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let opts = match parse_args(&args) {
+        Ok(Command::Version) => {
+            println!("{}", build.line());
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Help) => {
+            println!("{}", usage(build.name));
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Clock { seconds }) => return clock(build.name, seconds),
+        Ok(Command::Ctl { socket, request }) => return ctl_request(build.name, &socket, &request),
+        Ok(Command::Health(opts)) => return health_line(build, &opts),
+        Ok(Command::Run(opts)) => opts,
+        Err(msg) => {
+            eprintln!("{}: {msg}\n\n{}", build.name, usage(build.name));
+            return ExitCode::from(2);
+        }
+    };
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+    // The standalone device: no engine channel, the signals end it.
+    let ran = host::prepare(&opts, &[])
+        .and_then(|prepared| prepared.start(Signals::Stop))
+        .and_then(Host::wait);
+    match ran {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            error!("{e}");
+            ExitCode::from(host::exit_code(&e))
+        }
+    }
+}
+
+/// `clock --seconds <n>`: n polls of dantesync's time server, a second
+/// apart (the first at once), each one line on stdout; no log.
+fn clock(name: &str, seconds: u32) -> ExitCode {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("{name} clock: no runtime: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    rt.block_on(async {
+        let mut poller = match Poller::connect(DANTESYNC).await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("{name} clock: no socket to dantesync's time server: {e}");
+                return ExitCode::from(1);
+            }
+        };
+        let clock = MonoClock::new();
+        let freq = AtomicI32::new(0);
+        let mut lines = ClockLines::new();
+        let mut tick = tokio::time::interval(POLL);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        for t_s in 0..seconds {
+            tick.tick().await;
+            let polled = poller.once(&clock, &freq).await;
+            let line = lines.line(t_s, &polled);
+            if let Err(e) = writeln!(std::io::stdout(), "{line}") {
+                eprintln!("{name} clock: stdout: {e}");
+                return ExitCode::from(1);
+            }
+        }
+        ExitCode::SUCCESS
+    })
+}
+
+/// `health`: the box's verdict, one line on stdout, its state's exit
+/// code.
+fn health_line(build: Build, opts: &health::Options) -> ExitCode {
+    let verdict = health::check(opts, build);
+    if let Err(e) = writeln!(std::io::stdout(), "{}", verdict.line()) {
+        eprintln!("{} health: stdout: {e}", build.name);
+        return ExitCode::from(1);
+    }
+    ExitCode::from(verdict.state.exit_code())
+}
+
+/// `ctl`: one request line to the control socket at `path`, its answer
+/// line on stdout (exit 0 for `ok` or the status, 1 otherwise).
+fn ctl_request(name: &str, path: &Path, request: &str) -> ExitCode {
+    let exchange = || -> std::io::Result<String> {
+        let mut stream = UnixStream::connect(path)?;
+        stream.set_read_timeout(Some(CTL_WAIT))?;
+        stream.set_write_timeout(Some(CTL_WAIT))?;
+        stream.write_all(format!("{request}\n").as_bytes())?;
+        let mut answer = String::new();
+        BufReader::new(stream).read_line(&mut answer)?;
+        Ok(answer)
+    };
+    let answer = match exchange() {
+        Ok(answer) => answer,
+        Err(e) => {
+            eprintln!("{name} ctl: the control socket {}: {e}", path.display());
+            return ExitCode::from(1);
+        }
+    };
+    let line = answer.trim_end();
+    if let Err(e) = writeln!(std::io::stdout(), "{line}") {
+        eprintln!("{name} ctl: stdout: {e}");
+        return ExitCode::from(1);
+    }
+    if ctl_succeeded(line) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
