@@ -63,6 +63,23 @@ jobs:
           floor="$(tr -d '[:space:]' < .github/coverage-floor)"
           cargo llvm-cov --workspace --locked --summary-only --fail-under-lines "$floor"
 
+  rtsan:
+    # The pump block and the histogram record under RealtimeSanitizer, and
+    # the build an application's rtsan job makes of both crates.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Nightly toolchain with rust-src (rtsan builds std with -Zbuild-std)
+        run: rustup toolchain install nightly-2026-09-20 --profile minimal --component rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: The rtsan test
+        env:
+          RUSTFLAGS: "-Zsanitizer=realtime --cfg iem_rtsan"
+        run: cargo +nightly-2026-09-20 test --locked -Zbuild-std --target x86_64-unknown-linux-gnu -p dante-stack --test rtsan -- --nocapture
+
   version:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
