@@ -17,7 +17,8 @@
 //! | op1 | answer |
 //! |---|---|
 //! | 0x1000 | counts: TX, RX, inferno's 32 TX and 32 RX flows |
-//! | 0x1001 | the device's new name (netaudio's `set_name`): OK, no body; saved and announced |
+//! | 0x1001 | the device's new name (netaudio's `set_name`): OK, no body; saved, |
+//! |        | announced, our own subscriptions to it renamed |
 //! | 0x1002 | the device name |
 //! | 0x1003 | the device names: current, factory, board, revision |
 //! | 0x1100, 0x1102 | zeros, as inferno answers Dante Controller |
@@ -484,11 +485,28 @@ fn device_rename(h: &Header, body: &[u8], state: &mut DeviceState) -> ArcOutcome
     if name == state.name {
         return ArcOutcome::Reply(reply(h, STATUS_OK, &[]));
     }
-    info!("the device renamed by ARC (0x1001)");
+    // Our own RX subscribed to our own TX follow the name; a foreign
+    // receiver's subscription to the old name is its owner's (a renamed
+    // Dante device loses those everywhere).
+    let mut moved = Vec::new();
+    for (rx, sub) in state.subscriptions.iter_mut().enumerate() {
+        if let Some(sub) = sub
+            && sub.tx_device.eq_ignore_ascii_case(&state.name)
+        {
+            sub.tx_device = name.to_string();
+            moved.push(rx);
+        }
+    }
+    info!(
+        name,
+        own_subscriptions = moved.len(),
+        "the device renamed by ARC (0x1001)"
+    );
     state.name = name.to_string();
     ArcOutcome::Changed(
         reply(h, STATUS_OK, &[]),
         Change {
+            subscriptions: moved,
             device_renamed: true,
             ..Change::default()
         },
