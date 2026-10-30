@@ -34,7 +34,7 @@ const CTL_WAIT: Duration = Duration::from_secs(5);
 
 pub fn main(build: Build) -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let opts = match parse_args(&args) {
+    let (opts, source) = match parse_args(&args) {
         Ok(Command::Version) => {
             println!("{}", build.line());
             return ExitCode::SUCCESS;
@@ -45,7 +45,8 @@ pub fn main(build: Build) -> ExitCode {
         }
         Ok(Command::Clock { seconds }) => return clock(build.name, seconds),
         Ok(Command::Ctl { socket, request }) => return ctl_request(build.name, &socket, &request),
-        Ok(Command::Run(opts)) => opts,
+        Ok(Command::Run(opts)) => (opts, host::ClockSource::Dantesync),
+        Ok(Command::RunOnSystemClock(opts)) => (opts, host::ClockSource::System),
         Err(msg) => {
             eprintln!("{}: {msg}\n\n{}", build.name, usage(build.name));
             return ExitCode::from(2);
@@ -59,7 +60,7 @@ pub fn main(build: Build) -> ExitCode {
         )
         .init();
     // The standalone device: no engine channel, the signals end it.
-    let ran = host::prepare(&opts, &[])
+    let ran = host::prepare_with(&opts, &[], source)
         .and_then(|prepared| prepared.start(Signals::Stop))
         .and_then(Host::wait);
     match ran {

@@ -54,6 +54,39 @@ fn the_network_asks_arc_resolved_transmitters_for_the_config_s_fpp() {
 }
 
 #[test]
+fn a_run_takes_the_system_clock_only_when_asked() {
+    let base = ["--config", "c", "--iface", "eth9"];
+    let with = |extra: &[&str]| {
+        let mut a: Vec<&str> = base.to_vec();
+        a.extend_from_slice(extra);
+        parse_args(&args(&a))
+    };
+    let opts = || Options {
+        config: PathBuf::from("c"),
+        place: Place::Iface("eth9".into()),
+        control: PathBuf::from("/run/iem-dante/control.sock"),
+    };
+    assert_eq!(with(&[]), Ok(Command::Run(opts())));
+    assert_eq!(with(&["--clock", "dantesync"]), Ok(Command::Run(opts())));
+    assert_eq!(
+        with(&["--clock", "system"]),
+        Ok(Command::RunOnSystemClock(opts()))
+    );
+    for (extra, want) in [
+        (&["--clock"][..], "--clock needs a value"),
+        (&["--clock", "ptp"][..], "--clock is dantesync or system"),
+        (&["--clock", ""][..], "--clock is dantesync or system"),
+        (
+            &["--clock", "system", "--clock", "system"][..],
+            "--clock given twice",
+        ),
+    ] {
+        let got = with(extra).expect_err("refused");
+        assert!(got.contains(want), "{extra:?}: {got}");
+    }
+}
+
+#[test]
 fn a_run_takes_another_control_socket() {
     let want = Command::Run(Options {
         config: PathBuf::from("c"),

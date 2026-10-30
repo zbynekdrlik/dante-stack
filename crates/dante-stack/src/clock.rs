@@ -179,6 +179,8 @@ pub struct ClockStats {
     re_anchors: AtomicU32,
     holdovers: AtomicU32,
     in_holdover: AtomicBool,
+    /// The TEST system clock, no poller (`host::ClockSource::System`).
+    system: AtomicBool,
 }
 
 /// [`ClockStats`] read at one moment.
@@ -202,6 +204,16 @@ impl ClockStats {
         if let Event::ReAnchored { .. } = ev {
             self.re_anchors.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// The clock is the TEST system clock: nothing polls dantesync.
+    pub fn mark_system(&self) {
+        self.system.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the clock is the TEST system clock.
+    pub fn is_system(&self) -> bool {
+        self.system.load(Ordering::Relaxed)
     }
 
     pub fn counts(&self) -> ClockCounts {
