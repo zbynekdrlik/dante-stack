@@ -196,6 +196,27 @@ fn reasons_come_once_each_in_order() {
 }
 
 #[test]
+fn a_clock_not_ready_comes_first_and_hides_pump_free() {
+    let mut reads = engine_reads();
+    reads.1.clock.ready = 0;
+    reads.1.clock.holdover = 1;
+    reads.1.engine = Some(Pump {
+        media: 0,
+        rebootstraps: 2,
+        ..pump(30_000)
+    });
+    assert_eq!(
+        of(&reads, true),
+        vec![
+            DeviceReason::ClockNotReady,
+            DeviceReason::Holdover,
+            DeviceReason::PumpStalled,
+            DeviceReason::PumpRebootstrap,
+        ]
+    );
+}
+
+#[test]
 fn the_device_s_own_status_line_reads() {
     use crate::clock::{Event, ManualClock};
     use crate::daemon::media::tests::{T, Unready, device_at, media_on, media_with_engine};
