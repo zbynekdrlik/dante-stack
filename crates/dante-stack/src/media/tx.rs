@@ -510,10 +510,11 @@ pub struct LaneCounts {
     pub holes: u64,
     /// Packets sent (whole or not) by how late they left past due, one
     /// count a bin of [`LATE_EDGES_NS`].
-    pub late: [u64; LATE_BINS],
-    /// The latest a packet left past due, ns.
+    pub late_bins: [u64; LATE_BINS],
+    /// The largest lateness of any packet since the device started, ns
+    /// (a maximum: it never goes down; the bins are the counts).
     pub late_max_ns: u64,
-    /// The longest one send took, ns.
+    /// The longest single send since the device started, ns (a maximum).
     pub send_max_ns: u64,
 }
 
@@ -682,7 +683,7 @@ impl TxShared {
             keepalives: l.keepalives.load(Ordering::Relaxed),
             rebootstraps: l.rebootstraps.load(Ordering::Relaxed),
             holes: l.holes.load(Ordering::Relaxed),
-            late: std::array::from_fn(|i| l.late[i].load(Ordering::Relaxed)),
+            late_bins: std::array::from_fn(|i| l.late[i].load(Ordering::Relaxed)),
             late_max_ns: l.late_max_ns.load(Ordering::Relaxed),
             send_max_ns: l.send_max_ns.load(Ordering::Relaxed),
         }
@@ -862,6 +863,9 @@ impl Transmitter {
     /// went back), every flow realigned after a re-anchor, then every
     /// packet due sent. Nothing is sent before the clock is ready.
     pub fn step(&mut self, now_ns: Option<u64>, epoch: u32) {
+        // Taken with the clock read (the caller's), so a slow events pass
+        // counts in the lateness of the packets after it.
+        let pass = Instant::now();
         let events_due = match (now_ns, self.next_events) {
             // Past the next read, or the clock went back before the last.
             (Some(now), Some(at)) => now >= at || at - now > EVENTS_EVERY_NS,
@@ -881,7 +885,7 @@ impl Transmitter {
             }
         }
         self.epoch = Some(epoch);
-        self.send_due(now, now_ns);
+        self.send_due(now, now_ns, pass);
     }
 
     /// When the next pass is due, PTP ns: the next packet of any flow or
@@ -945,10 +949,10 @@ impl Transmitter {
         }
     }
 
-    /// Every packet due at media time `now` (PTP `now_ns`, read when the
-    /// pass began), each flow in turn (the hot path: no allocation, no
-    /// lock, no log; the send is its one system call).
-    fn send_due(&mut self, now: u64, now_ns: u64) {
+    /// Every packet due at media time `now` (PTP `now_ns`, read at `pass`),
+    /// each flow in turn (the hot path: no allocation, no lock, no log; the
+    /// send is its one system call).
+    fn send_due(&mut self, now: u64, now_ns: u64, pass: Instant) {
         let Transmitter {
             shared,
             lanes,
@@ -960,7 +964,6 @@ impl Transmitter {
             margin_ns,
             ..
         } = self;
-        let pass = Instant::now();
         let rings: &[Ring] = &shared.rings;
         for (slot, lane) in lanes.iter_mut().enumerate() {
             let Some(dest) = lane.plan.dest else {
@@ -1013,8 +1016,9 @@ impl Transmitter {
                 // How late it left: the pass's PTP time plus the time since,
                 // after the send (a thread not scheduled, or a send that
                 // blocked, both make it late).
-                let took = nanos(sent_at.elapsed());
-                let left = now_ns.saturating_add(nanos(pass.elapsed()));
+                let after = Instant::now();
+                let took = nanos(after - sent_at);
+                let left = now_ns.saturating_add(nanos(after - pass));
                 let due =
                     ns_of(stamp.saturating_add(plan.fpp.into()), *rate).saturating_add(*margin_ns);
                 let late = left.saturating_sub(due);
