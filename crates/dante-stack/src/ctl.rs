@@ -551,6 +551,12 @@ impl Json {
         let _ = write!(self.out, "{v}");
     }
 
+    /// An array item.
+    fn item(&mut self, v: impl Display) {
+        self.comma();
+        let _ = write!(self.out, "{v}");
+    }
+
     fn flag(&mut self, key: &str, v: bool) {
         self.num(key, u8::from(v));
     }
@@ -586,7 +592,11 @@ impl Json {
 ///   a page); `uncounted`: past the tables.
 /// - `tx`: each TX flow slot that has or had a flow: `flow`, `live` (a flow
 ///   that sends), `fpp`, `channels`, `packets`, `send_errors`, `keepalives`,
-///   `rebootstraps`, `holes` (echo samples the ring did not hold).
+///   `rebootstraps`, `holes` (echo samples the ring did not hold),
+///   `late_bins` (packets by how late they left past due, six counts at
+///   the edges of `media::tx::LATE_EDGES_NS`: under 0.25, 0.5, 1, 2 and 5
+///   ms, then 5 ms or more), `late_max_us` and `send_max_us` (the largest lateness and
+///   the longest single send since the device started: maxima).
 /// - `rx`: each RX flow slot that has or had a flow: `flow`, `granted`,
 ///   `fpp`, `channels`, `latency` (samples), `packets`, `refused`, `stray`,
 ///   `out_of_order`, `late`, `unplaced`, `lateness` (the largest in the
@@ -693,6 +703,13 @@ fn tx_part(j: &mut Json, media: &Media) {
         j.num("keepalives", lane.keepalives);
         j.num("rebootstraps", lane.rebootstraps);
         j.num("holes", lane.holes);
+        j.open(Some("late_bins"), '[');
+        for n in lane.late_bins {
+            j.item(n);
+        }
+        j.close(']');
+        j.num("late_max_us", lane.late_max_ns / 1_000);
+        j.num("send_max_us", lane.send_max_ns / 1_000);
         j.close('}');
     }
     j.close(']');

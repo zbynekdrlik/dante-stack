@@ -50,7 +50,10 @@
 //!
 //! The hot path (a packet's samples, the packet, the send) allocates
 //! nothing, takes no lock and logs nothing; its one system call is the send
-//! (`tests/hot_path.rs`). Errors are counted per slot ([`LaneCounts`]).
+//! (`tests/hot_path.rs`). Errors are counted per slot ([`LaneCounts`]), and
+//! so is how late each packet left past its due time ([`LATE_EDGES_NS`]):
+//! a stall inside the latency sends every packet, late, and a receiver's
+//! Dante Controller shows it, so our counts must too.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
@@ -89,6 +92,19 @@ pub const DISCONTINUITY: u64 = 192_000;
 /// How often the TX thread reads the plans, the sources and the keepalives
 /// (inferno's 33 ms).
 pub const EVENTS_EVERY_NS: u64 = 33_000_000;
+
+/// The lower edges (ns past due) of the lateness bins after the first:
+/// < 0.25, < 0.5, < 1, < 2, < 5 and >= 5 ms, the steps a receiver's
+/// latency reads in. A packet is due at its last sample plus the margin
+/// ([`Schedule::wake_ns`]); its lateness is read when its send returns.
+pub const LATE_EDGES_NS: [u64; 5] = [250_000, 500_000, 1_000_000, 2_000_000, 5_000_000];
+/// How many lateness bins a lane counts.
+pub const LATE_BINS: usize = LATE_EDGES_NS.len() + 1;
+
+/// The bin of a packet `ns` past due: the count of edges at or below it.
+pub fn late_bin(ns: u64) -> usize {
+    LATE_EDGES_NS.iter().take_while(|&&edge| ns >= edge).count()
+}
 /// The most datagrams read from one flow's socket a time (a flood never
 /// holds the thread).
 pub const KEEPALIVE_DRAIN: usize = 64;
@@ -472,6 +488,9 @@ pub struct LaneStats {
     keepalives: AtomicU64,
     rebootstraps: AtomicU64,
     holes: AtomicU64,
+    late: [AtomicU64; LATE_BINS],
+    late_max_ns: AtomicU64,
+    send_max_ns: AtomicU64,
 }
 
 /// One slot's counts since the device started (every flow it carried).
@@ -489,6 +508,14 @@ pub struct LaneCounts {
     /// Echo samples the RX ring did not hold, and engine samples the
     /// engine ring did not (sent as silence).
     pub holes: u64,
+    /// Packets sent (whole or not) by how late they left past due, one
+    /// count a bin of [`LATE_EDGES_NS`].
+    pub late_bins: [u64; LATE_BINS],
+    /// The largest lateness of any packet since the device started, ns
+    /// (a maximum: it never goes down; the bins are the counts).
+    pub late_max_ns: u64,
+    /// The longest single send since the device started, ns (a maximum).
+    pub send_max_ns: u64,
 }
 
 /// The control side's half of [`TxShared`]: the table, and the keepalive
@@ -656,6 +683,9 @@ impl TxShared {
             keepalives: l.keepalives.load(Ordering::Relaxed),
             rebootstraps: l.rebootstraps.load(Ordering::Relaxed),
             holes: l.holes.load(Ordering::Relaxed),
+            late_bins: std::array::from_fn(|i| l.late[i].load(Ordering::Relaxed)),
+            late_max_ns: l.late_max_ns.load(Ordering::Relaxed),
+            send_max_ns: l.send_max_ns.load(Ordering::Relaxed),
         }
     }
 
@@ -766,6 +796,11 @@ pub fn ns_of(samples: u64, rate: u32) -> u64 {
     u64::try_from((u128::from(samples) * 1_000_000_000).div_ceil(rate)).unwrap_or(u64::MAX)
 }
 
+/// A duration in whole ns, saturating.
+fn nanos(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
+}
+
 /// The media clock a schedule runs on: the samples at `rate` up to
 /// `margin_ns` before `now_ns`.
 pub fn send_clock(now_ns: u64, rate: u32, margin_ns: u64) -> u64 {
@@ -828,6 +863,9 @@ impl Transmitter {
     /// went back), every flow realigned after a re-anchor, then every
     /// packet due sent. Nothing is sent before the clock is ready.
     pub fn step(&mut self, now_ns: Option<u64>, epoch: u32) {
+        // Taken with the clock read (the caller's), so a slow events pass
+        // counts in the lateness of the packets after it.
+        let pass = Instant::now();
         let events_due = match (now_ns, self.next_events) {
             // Past the next read, or the clock went back before the last.
             (Some(now), Some(at)) => now >= at || at - now > EVENTS_EVERY_NS,
@@ -847,7 +885,7 @@ impl Transmitter {
             }
         }
         self.epoch = Some(epoch);
-        self.send_due(now);
+        self.send_due(now, now_ns, pass);
     }
 
     /// When the next pass is due, PTP ns: the next packet of any flow or
@@ -911,10 +949,10 @@ impl Transmitter {
         }
     }
 
-    /// Every packet due at media time `now`, each flow in turn (the hot
-    /// path: no allocation, no lock, no log; the send is its one system
-    /// call).
-    fn send_due(&mut self, now: u64) {
+    /// Every packet due at media time `now` (PTP `now_ns`, read at `pass`),
+    /// each flow in turn (the hot path: no allocation, no lock, no log; the
+    /// send is its one system call).
+    fn send_due(&mut self, now: u64, now_ns: u64, pass: Instant) {
         let Transmitter {
             shared,
             lanes,
@@ -923,6 +961,7 @@ impl Transmitter {
             packet,
             rate,
             max_lag,
+            margin_ns,
             ..
         } = self;
         let rings: &[Ring] = &shared.rings;
@@ -969,18 +1008,23 @@ impl Transmitter {
                 // A datagram socket sends the datagram whole or not at all
                 // (the packet fits one: `wire::MAX_DATAGRAM`), so the byte
                 // count says nothing more than `Ok`.
-                let sent_at = std::time::Instant::now();
+                let sent_at = Instant::now();
                 let counter = match socket.send_to(&packet[..n], dest) {
                     Ok(_) => &stats.packets,
                     Err(_) => &stats.send_errors,
                 };
-                // dante-asio, Windows: a send that blocks (Winsock) is
-                // logged with its length (rare by intent; the cause of the
-                // TX schedule's restarts is being found).
-                let took = sent_at.elapsed();
-                if took > std::time::Duration::from_micros(200) {
-                    tracing::warn!(us = took.as_micros() as u64, "a TX send blocked");
-                }
+                // How late it left: the pass's PTP time plus the time since,
+                // after the send (a thread not scheduled, or a send that
+                // blocked, both make it late).
+                let after = Instant::now();
+                let took = nanos(after - sent_at);
+                let left = now_ns.saturating_add(nanos(after - pass));
+                let due =
+                    ns_of(stamp.saturating_add(plan.fpp.into()), *rate).saturating_add(*margin_ns);
+                let late = left.saturating_sub(due);
+                stats.late[late_bin(late)].fetch_add(1, Ordering::Relaxed);
+                stats.late_max_ns.fetch_max(late, Ordering::Relaxed);
+                stats.send_max_ns.fetch_max(took, Ordering::Relaxed);
                 counter.fetch_add(1, Ordering::Relaxed);
             }
             stats.holes.fetch_add(holes as u64, Ordering::Relaxed);
