@@ -14,4 +14,5 @@ Start from `docs/HANDOVER.md`, then `docs/design/2026-10-30-shared-dante-stack.m
 - Every message to the owner in Slovak; code, commits and docs in English.
 
 ## Playbook router
-- Nothing yet: add `.claude/rules/<area>.md` as areas appear.
+- releases, versions, CHANGELOG, dependencies → `.claude/rules/release.md` (auto-loads on its `paths:`)
+- tests, whole-device tests, the mutation gate → `.claude/rules/tests.md` (auto-loads on its `paths:`)
