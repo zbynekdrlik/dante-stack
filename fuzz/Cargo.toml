@@ -1,0 +1,67 @@
+[package]
+name = "dante-stack-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "Coverage-guided fuzzing of dante-stack's datagram parsers and servers (cargo-fuzz)"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Outside the stack's workspace: cargo-fuzz builds it with its own flags
+# and lockfile.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+dante-stack = { path = "../crates/dante-stack" }
+
+[[bin]]
+name = "arc_server"
+path = "fuzz_targets/arc_server.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flows_server"
+path = "fuzz_targets/flows_server.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cmc"
+path = "fuzz_targets/cmc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "info"
+path = "fuzz_targets/info.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dsyx"
+path = "fuzz_targets/dsyx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "media_packet"
+path = "fuzz_targets/media_packet.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "replies"
+path = "fuzz_targets/replies.rs"
+test = false
+doc = false
+bench = false

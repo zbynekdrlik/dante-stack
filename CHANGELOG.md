@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 (2026-10-30)
+
+- New: coverage-guided fuzzing in CI (`fuzz/`, cargo-fuzz): `arc_server`, `flows_server`, `cmc`, `info`, `dsyx`, `media_packet` and `replies` (ARC and flow-control replies, a grant's handle, a string at an offset), 30 s each on every push. No change to the stack's code.
+
 ## 0.2.0 (2026-10-30)
 
 Breaking: the box health moves to the application (iemmixer, agreed on #1).

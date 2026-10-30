@@ -1,0 +1,19 @@
+//! Replies other devices send to our requests: ARC (our directory reads),
+//! flow control (our subscriptions), the flow handle in a grant, and a
+//! string at an offset of a body.
+#![no_main]
+
+use libfuzzer_sys::fuzz_target;
+
+fuzz_target!(|data: &[u8]| {
+    let Some((head, d)) = data.split_first_chunk::<6>() else {
+        return;
+    };
+    let seq = u16::from_be_bytes([head[0], head[1]]);
+    let op1 = u16::from_be_bytes([head[2], head[3]]);
+    let offset = u16::from_be_bytes([head[4], head[5]]);
+    let _ = dante_stack::arc::client::reply_to(d, seq, op1);
+    let _ = dante_stack::flows::client::reply_of(d, seq, op1);
+    let _ = dante_stack::flows::control::reply_handle(d);
+    let _ = dante_stack::wire::string_at(d, offset);
+});
