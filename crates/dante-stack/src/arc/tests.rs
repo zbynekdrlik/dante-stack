@@ -61,6 +61,13 @@ impl Flows for NoFlows {
         rx.load(subs);
         rx.changed()
     }
+
+    fn renamed(&self, name: &str) {
+        self.rx
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_host(name);
+    }
 }
 
 /// netaudio's start code; Dante Controller's is 0x2729.
@@ -1121,12 +1128,11 @@ fn an_opcode_inferno_does_not_answer_gets_no_reply() {
     let mut dev = Dev::new(config());
     dev.state.tx[0] = "Mix 1".into();
     let before = dev.state.clone();
-    let set_name = [&[0u8, 0][..], b"renamed\0"].concat();
     for (op1, body) in [
         // Dante Controller's 0x2204 with its captured body.
         (0x2204, DC_FIRST_PAGE.to_vec()),
-        // netaudio's set_name and set_latency: not in inferno either.
-        (0x1001, set_name),
+        // netaudio's set_latency: not in inferno either (set_name, 0x1001,
+        // is answered since v0.2.5).
         (0x1101, vec![0, 0, 0, 5]),
         (0x2203, DC_FIRST_PAGE.to_vec()),
         (0x3201, DC_FIRST_PAGE.to_vec()),
@@ -2355,7 +2361,7 @@ fn random_requests_never_panic_and_keep_the_names_valid() {
         let outcome = dev.send(&request(NETAUDIO, seq, op1, op2, &body));
         // No reply only where inferno sends none: op2 not 0, an opcode it
         // does not handle, a body it cannot read.
-        let silent = op2 != 0 || matches!(op1, 0x1001 | 0x2204);
+        let silent = op2 != 0 || op1 == 0x2204;
         let readable = !matches!(
             op1,
             op::TX_MULTICAST_CREATE
@@ -2377,7 +2383,11 @@ fn random_requests_never_panic_and_keep_the_names_valid() {
             changes += 1;
             assert!(matches!(
                 op1,
-                op::TX_RENAME | op::RX_RENAME | op::RX_SUBSCRIBE | op::RX_UNSUBSCRIBE
+                op::TX_RENAME
+                    | op::RX_RENAME
+                    | op::RX_SUBSCRIBE
+                    | op::RX_UNSUBSCRIBE
+                    | op::DEVICE_RENAME
             ));
             assert_ne!(dev.state, before);
         } else {

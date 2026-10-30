@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::arc::client::ReadError;
 use crate::arc::control::tests::Own;
 
 fn args(list: &[&str]) -> Vec<String> {
@@ -256,10 +257,34 @@ fn a_refused_write_stops_the_rest_and_is_reported() {
 }
 
 #[test]
-fn rename_against_a_device_that_does_not_answer_it_is_reported() {
+fn rename_renames_our_device_and_reads_it_back() {
     let mut own = Own::new();
     let name = own.cfg.name.clone();
     let out = rename(&mut own, &name, "new-name").unwrap();
+    assert!(out.renamed, "{out:?}");
+    assert_eq!(out.name.as_deref(), Some("new-name"));
+    assert!(out.error.is_none(), "{out:?}");
+    assert_eq!(own.state.name, "new-name");
+}
+
+/// Our device, but silent to a device rename (as inferno and netaudio's
+/// own devices may be).
+struct NoRename(Own);
+
+impl Call for NoRename {
+    fn call(&mut self, op1: u16, body: &[u8]) -> Result<(u16, Vec<u8>), ReadError> {
+        if op1 == crate::arc::control::SET_NAME {
+            return Err(ReadError::Timeout { op: op1 });
+        }
+        self.0.call(op1, body)
+    }
+}
+
+#[test]
+fn rename_against_a_device_that_does_not_answer_it_is_reported() {
+    let mut dev = NoRename(Own::new());
+    let name = dev.0.cfg.name.clone();
+    let out = rename(&mut dev, &name, "new-name").unwrap();
     assert!(!out.renamed);
     assert_eq!(out.name.as_deref(), Some(name.as_str()));
     assert!(
