@@ -583,7 +583,8 @@ impl Json {
 ///
 /// - `clock`: `ready` (0/1), `epoch` (re-anchors the media threads saw),
 ///   `polls`, `re_anchors`, `holdovers` (runs of polls in holdover),
-///   `holdover` (the last poll was), `freq_ppb` (dantesync's).
+///   `holdover` (the last poll was), `freq_ppb` (dantesync's), `source`
+///   (`dantesync`, or `system`: the TEST clock, `host::ClockSource::System`).
 /// - `requests`: `[{port, peer, op, n}]`, every datagram the device
 ///   received (ARC 4440, flow control 4455, info 8700, CMC 8800; `op` as
 ///   [`header_op`] and [`info_op`] read it); `sent`: `[{peer, op, n}]`, our
@@ -648,6 +649,14 @@ fn clock_part(j: &mut Json, media: &Media) {
     j.num("holdovers", c.holdovers);
     j.flag("holdover", c.in_holdover);
     j.num("freq_ppb", media.freq.load(Ordering::Relaxed));
+    j.word(
+        "source",
+        if media.clock_stats.is_system() {
+            "system"
+        } else {
+            "dantesync"
+        },
+    );
     j.close('}');
 }
 

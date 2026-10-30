@@ -57,7 +57,7 @@ use tokio::sync::Notify;
 use tracing::{info, warn};
 
 use crate::announce::Announcer;
-use crate::clock::{ClockStats, Event, MonoClock, monotonic_ns, poll_dantesync, realtime_ns};
+use crate::clock::{ClockStats, MonoClock, monotonic_ns, poll_dantesync, realtime_ns};
 #[cfg(unix)]
 use crate::ctl;
 use crate::daemon::media::{Clock, Media};
@@ -366,7 +366,7 @@ pub fn prepare_with(
         // Test only: PTP time is this machine's clock from now on.
         let k_ns = realtime_ns() - monotonic_ns();
         mono.set_k(k_ns);
-        clock.stats.record(Event::Ready { k_ns });
+        clock.stats.mark_system();
         warn!(
             "media clock: the TEST system clock; PTP time is this machine's clock, not the \
              network's: never for a real Dante network"
