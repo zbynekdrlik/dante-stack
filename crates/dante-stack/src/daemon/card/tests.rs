@@ -16,16 +16,14 @@ fn the_verbs_parse_as_dante_card_s() {
             verb: Verb::Read
         })
     );
+    // An absolute path on this platform (C:\\... on Windows).
+    let flag = std::env::temp_dir().join("EVENT-NOW");
+    let flag_text = flag.to_str().unwrap();
     assert_eq!(
-        parse(&args(&[
-            "write",
-            "169.254.3.4",
-            "iem-card",
-            "/run/x/EVENT-NOW"
-        ]))
-        .unwrap()
-        .verb,
-        Verb::Write("/run/x/EVENT-NOW".into())
+        parse(&args(&["write", "169.254.3.4", "iem-card", flag_text]))
+            .unwrap()
+            .verb,
+        Verb::Write(flag.clone())
     );
     assert_eq!(
         parse(&args(&[
