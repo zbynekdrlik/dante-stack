@@ -187,15 +187,11 @@ fn a_refused_label_is_a_refusal() {
 }
 
 #[test]
-fn our_device_does_not_answer_a_device_rename() {
-    // Inferno and our server leave 0x1001 unanswered: no reply, as a
-    // device that does not support it.
+fn our_device_takes_a_device_rename() {
     let mut own = Own::new();
-    assert_eq!(
-        rename_device(&mut own, "other-name"),
-        Err(ReadError::Timeout { op: SET_NAME })
-    );
-    assert_eq!(device_name(&mut own).unwrap(), own.cfg.name);
+    rename_device(&mut own, "other-name").unwrap();
+    assert_eq!(device_name(&mut own).unwrap(), "other-name");
+    assert_eq!(own.state.name, "other-name");
 }
 
 /// A device whose name reply is empty, or that refuses.

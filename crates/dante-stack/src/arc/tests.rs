@@ -273,6 +273,7 @@ fn subs_changed(rx: &[usize]) -> Change {
     Change {
         renamed_rx: Vec::new(),
         subscriptions: rx.to_vec(),
+        device_renamed: false,
     }
 }
 
@@ -2567,4 +2568,60 @@ async fn the_server_sends_nothing_for_an_opcode_inferno_does_not_answer() {
     let more = tokio::time::timeout(Duration::from_millis(200), peer.recv_from(&mut buf)).await;
     assert!(more.is_err(), "an unanswered request was answered");
     s.task.abort();
+}
+
+// ---- the device's own name (0x1001, request #2) ----
+
+#[test]
+fn dante_controller_renames_the_device() {
+    let mut dev = Dev::new(config());
+    let answer = dev.ask(9, 0x1001, b"stage-left\0");
+    assert_eq!(answer.header.op2, STATUS_OK);
+    assert!(answer.changed, "the state changed");
+    assert_eq!(dev.state.name, "stage-left");
+    // The device's name reply and the 0x1003 names carry it from now on.
+    let name = dev.ask(10, op::DEVICE_NAME, &[]);
+    assert_eq!(name.body, b"stage-left\0");
+    let outcome = dev.send(&request(NETAUDIO, 11, 0x1001, 0, b"stage-left\0"));
+    assert!(
+        matches!(outcome, ArcOutcome::Reply(_)),
+        "the same name again changes nothing: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_device_rename_carries_its_change() {
+    let mut dev = Dev::new(config());
+    match dev.send(&request(NETAUDIO, 1, 0x1001, 0, b"stage-left\0")) {
+        ArcOutcome::Changed(_, change) => assert_eq!(
+            change,
+            Change {
+                renamed_rx: Vec::new(),
+                subscriptions: Vec::new(),
+                device_renamed: true,
+            }
+        ),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_name_dante_does_not_hold_is_refused() {
+    for body in [
+        &b"\0"[..],
+        b"-stage\0",
+        b"stage-\0",
+        b"stage left\0",
+        b"a.b\0",
+        b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0",
+        b"stage",
+        b"",
+    ] {
+        let mut dev = Dev::new(config());
+        let before = dev.state.clone();
+        let answer = dev.ask(1, 0x1001, body);
+        assert_eq!(answer.header.op2, STATUS_ERROR, "{body:?}");
+        assert!(!answer.changed);
+        assert_eq!(dev.state, before);
+    }
 }
