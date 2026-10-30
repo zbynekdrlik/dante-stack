@@ -111,7 +111,7 @@ pub fn usage(name: &str) -> String {
 /// The `--help` text, naming [`NAME`]; [`usage`] names another binary.
 pub const USAGE: &str = "\
 usage: dante-stack-dev --config <path> (--iface <name> | --ip <IPv4 address>)
-                     [--control <socket path>]
+                     [--control <socket path>] [--clock dantesync|system]
        dante-stack-dev ctl [--socket <path>] <request>
        dante-stack-dev clock --seconds <n>
        dante-stack-dev --version
@@ -126,7 +126,9 @@ PTP time read from dantesync (127.0.0.1:31900); it never sends PTP. Its
 control socket (default /run/iem-dante/control.sock) takes one request
 line a connection. SIGTERM or SIGINT stops every RX flow at its
 transmitter, ends the media threads and withdraws the records (mDNS
-goodbyes), then it exits 0.
+goodbyes), then it exits 0. --clock system (TEST ONLY) takes PTP time from
+this machine's own clock instead of dantesync, ready at once: for a box with
+no PTP network; its flows play in sync with no other device.
 
 ctl: sends one request to the control socket and prints the answer line:
   status                    the device's numbers, one JSON line
@@ -171,6 +173,9 @@ pub struct Options {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Run(Options),
+    /// TEST ONLY (`--clock system`): the device on this machine's own clock
+    /// (`host::ClockSource::System`), for a box with no PTP network (CI).
+    RunOnSystemClock(Options),
     /// `clock --seconds <n>`: n polls of dantesync, a line each.
     Clock {
         seconds: u32,
@@ -199,6 +204,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
     let mut iface = None;
     let mut ip = None;
     let mut control = None;
+    let mut clock = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let slot = match arg.as_str() {
@@ -208,6 +214,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             "--iface" => &mut iface,
             "--ip" => &mut ip,
             "--control" => &mut control,
+            "--clock" => &mut clock,
             other => return Err(format!("unknown argument {other:?}")),
         };
         let Some(value) = it.next() else {
@@ -230,11 +237,16 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         Some(path) => PathBuf::from(path),
         None => PathBuf::from(crate::ctl::SOCKET),
     };
-    Ok(Command::Run(Options {
+    let opts = Options {
         config: PathBuf::from(config),
         place,
         control,
-    }))
+    };
+    match clock.as_deref() {
+        None | Some("dantesync") => Ok(Command::Run(opts)),
+        Some("system") => Ok(Command::RunOnSystemClock(opts)),
+        Some(_) => Err("--clock is dantesync or system".into()),
+    }
 }
 
 /// `ctl`'s own arguments: `--socket <path>` first if at all, then the
