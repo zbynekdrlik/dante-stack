@@ -4,6 +4,10 @@
 //! iemmixer's `iem-audio-io`, which re-exports these items from here; its
 //! audio backends stay in iemmixer.
 
+// The rtsan CI job (nightly, `--cfg iem_rtsan`) marks
+// `hist::PeriodHist::record` as a real-time context (I7).
+#![cfg_attr(iem_rtsan, feature(sanitize))]
+
 use core::any::Any;
 use core::ops::Range;
 
