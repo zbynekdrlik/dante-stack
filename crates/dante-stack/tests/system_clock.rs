@@ -1,6 +1,8 @@
 //! A whole device on the test-only system clock (dante-asio's CI E2E: a
 //! GitHub-hosted runner has no dantesync and no PTP network). The real
-//! host is prepared on 127.0.0.1 with `ClockSource::System` and a state
+//! host is prepared on the box's first non-loopback IPv4 address (the
+//! production checks stay: no loopback, a real MAC) with
+//! `ClockSource::System` and a state
 //! file that subscribes RX 1 to our own TX 1 (resolved from our own
 //! records, no mDNS); it starts its threads as in production. TX 1 sends
 //! the counter and RX 1's counter check must read clean within the bound,
@@ -8,7 +10,6 @@
 
 #![cfg(any(target_os = "linux", windows))]
 
-use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -64,9 +65,15 @@ fn field(json: &str, head: &str, key: &str) -> Option<u64> {
 #[test]
 fn our_tx_reaches_our_rx_clean_on_the_system_clock() {
     let dir = tempfile::tempdir().unwrap();
+    let ip = host::interfaces()
+        .expect("the box's interfaces")
+        .into_iter()
+        .map(|a| a.ip)
+        .find(|ip| !ip.is_loopback() && !ip.is_link_local())
+        .expect("a non-loopback IPv4 address on this box");
     let opts = Options {
         config: device_in(dir.path()),
-        place: Place::Ip(Ipv4Addr::LOCALHOST),
+        place: Place::Ip(ip),
         control: dir.path().join("control.sock"),
     };
     let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("the device set up");
