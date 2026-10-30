@@ -99,6 +99,7 @@ use crate::wire::{
 use gaps::{Gap, Gaps};
 
 pub mod client;
+pub mod control;
 pub mod gaps;
 
 /// ARC's UDP port.
