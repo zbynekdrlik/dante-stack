@@ -551,6 +551,12 @@ impl Json {
         let _ = write!(self.out, "{v}");
     }
 
+    /// An array item.
+    fn item(&mut self, v: impl Display) {
+        self.comma();
+        let _ = write!(self.out, "{v}");
+    }
+
     fn flag(&mut self, key: &str, v: bool) {
         self.num(key, u8::from(v));
     }
@@ -693,6 +699,13 @@ fn tx_part(j: &mut Json, media: &Media) {
         j.num("keepalives", lane.keepalives);
         j.num("rebootstraps", lane.rebootstraps);
         j.num("holes", lane.holes);
+        j.open(Some("late"), '[');
+        for n in lane.late {
+            j.item(n);
+        }
+        j.close(']');
+        j.num("late_max_us", lane.late_max_ns / 1_000);
+        j.num("send_max_us", lane.send_max_ns / 1_000);
         j.close('}');
     }
     j.close(']');

@@ -1015,8 +1015,8 @@ impl Transmitter {
                 // blocked, both make it late).
                 let took = nanos(sent_at.elapsed());
                 let left = now_ns.saturating_add(nanos(pass.elapsed()));
-                let due = ns_of(stamp.saturating_add(plan.fpp.into()), *rate)
-                    .saturating_add(*margin_ns);
+                let due =
+                    ns_of(stamp.saturating_add(plan.fpp.into()), *rate).saturating_add(*margin_ns);
                 let late = left.saturating_sub(due);
                 stats.late[late_bin(late)].fetch_add(1, Ordering::Relaxed);
                 stats.late_max_ns.fetch_max(late, Ordering::Relaxed);
