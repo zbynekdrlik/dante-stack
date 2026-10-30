@@ -313,3 +313,56 @@ fn a_tx_only_device_serves_a_receiver() {
     );
     assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
 }
+
+/// `card` over the network (the ARC client's UDP exchange) against our own
+/// running device: read, write two labels, read them back.
+#[test]
+fn card_reads_and_writes_our_running_device() {
+    use dante_stack::arc::client::{REPLY_TIMEOUT, Udp};
+    use dante_stack::daemon::card;
+    use std::net::SocketAddrV4;
+    use std::sync::atomic::AtomicU16;
+
+    let _one = ONE_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let ip = routed_ipv4();
+    let opts = Options {
+        config: config_in(dir.path(), true),
+        place: Place::Ip(ip),
+        control: dir.path().join("control.sock"),
+    };
+    let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("the device set up");
+    let name = prepared.config().name.clone();
+    let rx2 = prepared.config().rx[1].clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let host = prepared
+        .start(Signals::Report(Arc::clone(&stop)))
+        .expect("the device started");
+    let seq = AtomicU16::new(1);
+    let requests = dante_stack::ctl::Requests::default();
+    let halt = AtomicBool::new(false);
+    let to = SocketAddrV4::new(ip, dante_stack::arc::PORT);
+    let mut udp = Udp::open(ip, to, &seq, REPLY_TIMEOUT, &requests, &halt).expect("a socket");
+    let read = card::read(&mut udp, &name);
+    let changes = card::parse_changes(
+        r#"[{"type":"rx","channel":2,"label":"Vox L"},{"type":"tx","channel":1,"label":"Click"}]"#,
+    )
+    .unwrap();
+    let flag = dir.path().join("EVENT-NOW");
+    let written = card::write(&mut udp, &name, &flag, &changes);
+    let stopped = host.stop(Duration::from_secs(5));
+    let read = read.expect("card read");
+    assert_eq!(read["rx"]["2"], rx2.as_str(), "{read}");
+    let written = written.expect("card write");
+    assert!(written["error"].is_null(), "{written}");
+    assert_eq!(written["mismatches"], serde_json::json!([]), "{written}");
+    assert_eq!(written["rx"]["2"], "Vox L");
+    assert_eq!(written["tx"]["1"], "Click");
+    // The device saved the labels in its state file.
+    let saved = std::fs::read_to_string(dir.path().join("state.toml")).unwrap();
+    assert!(
+        saved.contains("Vox L") && saved.contains("Click"),
+        "{saved}"
+    );
+    assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
+}

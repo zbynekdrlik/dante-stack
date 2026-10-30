@@ -89,16 +89,16 @@ fn a_device_name_is_netaudio_s_request() {
 // ---- against our own server ----
 
 /// Our own device answering in process: its config, state and flows.
-struct Own {
-    cfg: DeviceConfig,
-    state: DeviceState,
+pub(crate) struct Own {
+    pub(crate) cfg: DeviceConfig,
+    pub(crate) state: DeviceState,
     tx: TxTable,
     rx: Manager,
     seq: u16,
 }
 
 impl Own {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let cfg = DeviceConfig::from_toml(TEST_DEVICE).expect("the test device");
         let rx = Manager::new(&cfg, &cfg.name, Ipv4Addr::new(10, 0, 0, 10), [0; MAX_FLOWS]);
         Own {

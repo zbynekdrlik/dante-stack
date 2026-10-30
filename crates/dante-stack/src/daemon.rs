@@ -33,6 +33,7 @@
 //! channel numbers, never a name or an address: the device and channel
 //! names are the ops repository's (P6).
 
+pub mod card;
 #[cfg(target_os = "linux")]
 pub mod cli;
 pub mod media;
@@ -114,6 +115,9 @@ usage: dante-stack-dev --config <path> (--iface <name> | --ip <IPv4 address>)
                      [--control <socket path>] [--clock dantesync|system]
        dante-stack-dev ctl [--socket <path>] <request>
        dante-stack-dev clock --seconds <n>
+       dante-stack-dev card read <ip> <expected-name>
+       dante-stack-dev card write <ip> <expected-name> <flag>   (changes as JSON on stdin)
+       dante-stack-dev card rename <ip> <expected-name> <new-name>
        dante-stack-dev --version
 
 Our own Dante device (Gen 3, #72): ARC on UDP 4440, CMC on UDP 8800, the
@@ -129,6 +133,13 @@ transmitter, ends the media threads and withdraws the records (mDNS
 goodbyes), then it exits 0. --clock system (TEST ONLY) takes PTP time from
 this machine's own clock instead of dantesync, ready at once: for a box with
 no PTP network; its flows play in sync with no other device.
+
+card: another device's channel labels and name, by its IP on the ARC port
+(iemmixer's dante_card.py contract): only after it names itself
+<expected-name> and reads completely; a label equal to its channel's number
+resets it; <flag> appearing stops the writes. One JSON line on stdout. Exit 0
+(written, see `error`), 1 no answer, another device, an incomplete read or a
+missing channel (nothing written), 2 usage.
 
 ctl: sends one request to the control socket and prints the answer line:
   status                    the device's numbers, one JSON line
@@ -180,6 +191,9 @@ pub enum Command {
     Clock {
         seconds: u32,
     },
+    /// `card <verb> ...`: another device's labels and name by its IP
+    /// ([`card`]); the arguments after the word `card`.
+    Card(Vec<String>),
     /// `ctl [--socket <path>] <request>`: one request to the control
     /// socket, its words joined by spaces.
     Ctl {
@@ -198,6 +212,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
     match args.split_first() {
         Some((first, rest)) if first == "clock" => return parse_clock(rest),
         Some((first, rest)) if first == "ctl" => return parse_ctl(rest),
+        Some((first, rest)) if first == "card" => return Ok(Command::Card(rest.to_vec())),
         _ => {}
     }
     let mut config = None;

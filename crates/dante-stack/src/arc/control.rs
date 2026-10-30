@@ -248,4 +248,4 @@ pub fn rename_device(c: &mut impl Call, name: &str) -> Result<(), ReadError> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
