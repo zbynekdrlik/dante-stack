@@ -141,74 +141,11 @@ fn ctl_takes_a_socket_and_the_request_s_words() {
 }
 
 #[test]
-fn health_takes_a_socket_and_a_server_port() {
-    let health = |socket: &str, server_port: u16| {
-        Command::Health(crate::health::Options {
-            socket: PathBuf::from(socket),
-            server_port,
-        })
-    };
-    let default = "/run/iem-dante/control.sock";
-    for (a, want) in [
-        (&["health"][..], health(default, 80)),
-        (
-            &["health", "--socket", "/tmp/c.sock"],
-            health("/tmp/c.sock", 80),
-        ),
-        (
-            &[
-                "health",
-                "--server-port",
-                "18080",
-                "--socket",
-                "/tmp/c.sock",
-            ],
-            health("/tmp/c.sock", 18_080),
-        ),
-        (&["health", "--server-port", "1"], health(default, 1)),
-        (
-            &["health", "--server-port", "65535"],
-            health(default, 65_535),
-        ),
-        (&["health", "--help", "--bogus"], Command::Help),
-        (&["health", "--socket", "/tmp/c.sock", "-h"], Command::Help),
-    ] {
-        assert_eq!(parse_args(&args(a)), Ok(want), "{a:?}");
-    }
-    let cases: &[(&[&str], &str)] = &[
-        (&["health", "--socket"], "--socket needs a value"),
-        (&["health", "--socket", ""], "--socket needs a path"),
-        (&["health", "--server-port"], "--server-port needs a value"),
-        (
-            &["health", "--server-port", "0"],
-            "--server-port \"0\" is not a port from 1 to 65535",
-        ),
-        (&["health", "--server-port", "65536"], "is not a port"),
-        (&["health", "--server-port", "-1"], "is not a port"),
-        (&["health", "--server-port", "http"], "is not a port"),
-        (
-            &["health", "--socket", "a", "--socket", "b"],
-            "--socket given twice",
-        ),
-        (
-            &["health", "--server-port", "1", "--server-port", "2"],
-            "--server-port given twice",
-        ),
-        (
-            &["health", "--version"],
-            "health: unknown argument \"--version\"",
-        ),
-        (&["health", "status"], "health: unknown argument \"status\""),
-        // Only the first word selects health.
-        (
-            &["--config", "c", "--iface", "e", "health"],
-            "unknown argument \"health\"",
-        ),
-    ];
-    for (a, want) in cases {
-        let got = parse_args(&args(a)).expect_err(&format!("{a:?} is refused"));
-        assert!(got.contains(want), "{a:?}: {got}");
-    }
+fn health_is_no_command_of_the_stack() {
+    // The box's health moved to iemmixer in v0.2.0: `health` first reads
+    // as an unknown argument, like any other word.
+    let got = parse_args(&args(&["health"])).expect_err("health is refused");
+    assert!(got.contains("unknown argument \"health\""), "{got}");
 }
 
 #[test]
