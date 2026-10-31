@@ -20,6 +20,7 @@
 
 pub mod check;
 pub mod packet;
+pub mod qos;
 pub mod ring;
 pub mod rx;
 pub mod source;

@@ -1083,6 +1083,12 @@ fn run(clock: &dyn PtpClock, shared: Arc<TxShared>) {
         );
     }
     place("TX thread", shared.cfg.io_cpu);
+    // Held while the thread runs: deep idle states delay every packet
+    // after its send (`super::qos`).
+    #[cfg(target_os = "linux")]
+    let _wake = crate::clock::realtime_for(crate::clock::profile())
+        .then(|| super::qos::hold(std::path::Path::new(super::qos::CPU_DMA_LATENCY)))
+        .flatten();
     let mut tx = Transmitter::new(Arc::clone(&shared));
     while !shared.stopping() {
         let now = clock.now_ns();
