@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.11 (2026-10-31)
+
+- Linux: the RX thread reads in passes at least 50 µs apart (from each pass's start) instead of waking per datagram: what arrives meanwhile waits in its socket and the next pass reads it. On the gen3 box, 7 stage flows at fpp 4 woke the thread 168 k times a second on the core it shares with TX. A datagram is read at most 50 µs later, a fifth of the lowest latency we receive at. Windows keeps a wake per datagram (its sleep is coarse) (dstack #1).
+
 ## 0.4.10 (2026-10-31)
 
 - Fix: the TX thread runs at `SCHED_FIFO` 47, above the RX thread's 44 (both were 45). On the gen3 box the two threads share the io core, and with 7 stage flows received (168 k packets/s at fpp 4) the TX thread waited for the RX thread to yield: age_max 239/247 µs at 250 µs and card peaks over 400 µs (iemmixer, v0.4.9). A send now preempts a receive; both stay below dantesync's 50, the engine pump stays at 40 (dstack #1).

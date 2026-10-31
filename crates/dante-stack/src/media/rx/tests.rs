@@ -931,3 +931,14 @@ fn a_packet_is_late_only_past_its_flow_s_playout_plus_the_block() {
     pump(&mut rx, 0, 1, Some(now), 0);
     assert_eq!(s.lane(0).late, 1, "{:?}", s.lane(0));
 }
+
+#[test]
+fn a_pass_rests_until_its_period_from_the_start_and_never_past_it() {
+    assert_eq!(rest_ns(1_000_000, 1_000_000), PASS_NS);
+    assert_eq!(rest_ns(1_000_000, 1_000_000 + 20_000), PASS_NS - 20_000);
+    assert_eq!(rest_ns(1_000_000, 1_000_000 + PASS_NS), 0);
+    assert_eq!(rest_ns(1_000_000, 1_000_000 + PASS_NS + 1), 0);
+    assert_eq!(rest_ns(u64::MAX, 0), u64::MAX, "saturates");
+    // At most a fifth of the lowest latency we receive at.
+    assert!(PASS_NS * 5 <= 250_000);
+}
