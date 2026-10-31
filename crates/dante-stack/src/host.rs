@@ -64,7 +64,6 @@ use crate::daemon::media::{Clock, Media};
 use crate::daemon::{self, BUILD, IfAddr, Options, ServeError, Sockets, VERSION};
 use crate::device::{Device, DeviceConfig, DeviceState};
 use crate::info::{self, Multicast, NetInfo};
-use crate::{arc, cmc, flows};
 
 /// How long the mDNS daemon gets to send the goodbyes and stop.
 pub const GOODBYE_WAIT: Duration = Duration::from_secs(3);
@@ -361,6 +360,17 @@ pub fn prepare_with(
     source: ClockSource,
 ) -> Result<Prepared, HostError> {
     let device = load_device(read_config(&opts.config)?)?;
+    // Withdrawn (31.10.2026): on Windows its timer-only waits made the TX
+    // and the pump late (a receiver's Latency tab: peak 32.1 ms, 2562 late
+    // packets, pops on the PA). Refused until fixed and proven on a
+    // receiver's latency records.
+    if device.cfg.timing == crate::device::TimingProfile::Normal {
+        return Err(setup(
+            "timing = \"normal\" is withdrawn: it made the TX late on Windows; \
+             use low_latency (the default)"
+                .to_string(),
+        ));
+    }
     // One timing profile per process: the media threads' waits and
     // priorities read it.
     if !crate::clock::set_profile(device.cfg.timing) {
@@ -406,6 +416,17 @@ pub fn prepare_with(
         .build()
         .map_err(run_failed)?;
     let sockets = bind_sockets(&rt, net.ip, &device.cfg)?;
+    info!(
+        arc = device.cfg.arc_port,
+        cmc = device.cfg.cmc_port,
+        info = info::REQUEST_PORT,
+        info_shared = sockets.info.is_none(),
+        flows = device.cfg.flows_port,
+        process_id = device.cfg.process_id,
+        info_group_port = info::INFO_PORT,
+        heartbeat_port = info::HEARTBEAT_PORT,
+        "listening on the interface's address"
+    );
     // The media clock: PTP time from dantesync on the box, polled once a
     // second for the device's life (from the start).
     let mono = Arc::new(MonoClock::new());
@@ -703,15 +724,6 @@ async fn serve_device(
             Arc::clone(&s.media.clock_stats),
         ));
     }
-    info!(
-        arc = arc::PORT,
-        cmc = cmc::PORT,
-        info = info::REQUEST_PORT,
-        flows = flows::control::PORT,
-        info_group_port = info::INFO_PORT,
-        heartbeat_port = info::HEARTBEAT_PORT,
-        "listening on the interface's address"
-    );
     #[cfg(unix)]
     let ctl_server = ctl::serve_control(s.listener, Arc::clone(&s.media));
     // No control socket on Windows (dante-asio's tray reads the shared memory).

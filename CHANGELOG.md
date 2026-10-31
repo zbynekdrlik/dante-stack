@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.7 (2026-10-31)
+
+- Withdrawn: `timing = "normal"` is refused at setup. On the Resolume PC (v0.4.2), its Windows timer-only waits made SongPlayer's TX and pump late: the FOH console's Dante Controller Latency tab showed songplayer at peak 32.1 ms, average 14.7 ms, with 2562 late packets, and the PA popped. It stays refused until it is fixed and proven on a receiver's latency records (dstack #1).
+- Fix (dasio): the start line "listening on the interface's address" named the default ports; it now names the device's own (`arc`, `cmc`, `flows`), its `process_id`, and `info_shared` (a member of the address's info port).
+
 ## 0.4.6 (2026-10-31)
 
 - New: several of our devices on one address (owner, 31.10.2026: no extra IPs; dstack #1, the per-PC manager). UDP 8700 is one per address, and Dante Controller reads a device's ARC only after an 0x0061 reply carrying that device's id (dev1: a second device whose 8700 was the first's was never read; 0x0061 asked 38 times). The process holding `<ip>`:8700 is the address's manager. A device that finds it held (`host::info_port_held`, bind refused with AddrInUse) joins as a member over loopback (`info::share`, `share_port(ip)` = 18700 + the address's low 10 bits) and renews its lease every second (3 s lease, at most 32 members). The manager relays every info request to each live member; the member answers with its own identity and hands back the packet, which the manager sends from 8700, as it does the member's board and product info, heartbeats and notifications. When the manager ends, a member binds 8700 within a second and becomes the manager (`info::serve_shared`, `serve_member`, `serve_info_with`). Each device needs its own ports and process id (0.4.5). On dev1, two device processes on one address were both read in full by Dante Controller, and the handover took 0.25 s. Consumer-visible: `daemon::Sockets::info` is an `Option`.

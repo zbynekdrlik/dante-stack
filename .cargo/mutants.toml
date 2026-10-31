@@ -15,6 +15,8 @@ exclude_globs = ["crates/dante-stack/src/clock/sys_windows.rs"]
 # process-wide profile's wrappers (its logic is `clock::ProfileCell`,
 # tested); setting the profile in a test would change every other test.
 exclude_re = [
+  # Host glue only the whole-host tests run (they cannot run per mutant).
+  "replace serve_device -> Result",
   "ask_realtime",
   "replace set_profile -> bool",
   "replace profile -> TimingProfile",
