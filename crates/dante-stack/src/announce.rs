@@ -21,6 +21,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
+use std::time::{Duration, Instant};
 
 use mdns_sd::{ServiceDaemon, ServiceInfo, TxtProperty};
 
@@ -197,12 +198,44 @@ pub enum AnnounceError {
     },
 }
 
+/// How long one call waits out mdns-sd's full command queue at most.
+/// mdns-sd queues at most 100 commands and answers [`mdns_sd::Error::Again`]
+/// while the queue is full; a device with more records than that (iemmixer's,
+/// about 200) fills it at start. The daemon empties it in milliseconds, so a
+/// queue still full after this is a daemon that does not run.
+pub const AGAIN_WAIT: Duration = Duration::from_secs(2);
+/// The pause between two tries while the queue is full.
+const AGAIN_PAUSE: Duration = Duration::from_millis(1);
+
+/// `call` again while it answers [`mdns_sd::Error::Again`], at most `wait`
+/// long: its last answer, and how many times it waited.
+fn retried(
+    wait: Duration,
+    mut call: impl FnMut() -> Result<(), mdns_sd::Error>,
+) -> (Result<(), mdns_sd::Error>, u64) {
+    let deadline = Instant::now() + wait;
+    let mut waits = 0;
+    loop {
+        match call() {
+            Err(mdns_sd::Error::Again) if Instant::now() < deadline => {
+                waits += 1;
+                std::thread::sleep(AGAIN_PAUSE);
+            }
+            result => return (result, waits),
+        }
+    }
+}
+
 /// The device's records in the mDNS daemon: what is registered now, so the
 /// next set replaces it without repeating what did not change.
 pub struct Announcer<R: Registry> {
     registry: R,
     /// What the registry holds, by lower-case full name.
     live: BTreeMap<String, ServiceRecord>,
+    /// [`AGAIN_WAIT`], shorter in tests.
+    again_wait: Duration,
+    /// Waits for a full command queue so far.
+    waited: u64,
 }
 
 impl<R: Registry> Announcer<R> {
@@ -210,7 +243,20 @@ impl<R: Registry> Announcer<R> {
         Self {
             registry,
             live: BTreeMap::new(),
+            again_wait: AGAIN_WAIT,
+            waited: 0,
         }
+    }
+
+    /// How many times a call waited for mdns-sd's full command queue so far.
+    pub fn waited(&self) -> u64 {
+        self.waited
+    }
+
+    #[cfg(test)]
+    fn with_again_wait(mut self, wait: Duration) -> Self {
+        self.again_wait = wait;
+        self
     }
 
     pub fn registry(&self) -> &R {
@@ -218,7 +264,9 @@ impl<R: Registry> Announcer<R> {
     }
 
     /// Makes `recs` the registered set: the records that are gone are
-    /// unregistered first, then every new or changed one is registered.
+    /// unregistered first, then every new or changed one is registered. A
+    /// full mDNS command queue is waited out ([`AGAIN_WAIT`] a call, which
+    /// blocks the calling thread for that long at most).
     /// Every record is built before anything is sent, so a record mdns-sd
     /// refuses changes nothing; a failed call leaves its record to the next
     /// announcement.
@@ -248,22 +296,24 @@ impl<R: Registry> Announcer<R> {
             .collect();
         for name in gone {
             let service = self.live[&name].service;
-            self.registry
-                .unregister(&name)
-                .map_err(|source| AnnounceError::Withdraw { service, source })?;
+            let registry = &self.registry;
+            let (result, waits) = retried(self.again_wait, || registry.unregister(&name));
+            self.waited += waits;
+            result.map_err(|source| AnnounceError::Withdraw { service, source })?;
             self.live.remove(&name);
         }
         for (index, name, info, rec) in wanted {
             if self.live.get(&name) == Some(rec) {
                 continue;
             }
-            self.registry
-                .register(info)
-                .map_err(|source| AnnounceError::Record {
-                    index,
-                    service: rec.service,
-                    source,
-                })?;
+            let registry = &self.registry;
+            let (result, waits) = retried(self.again_wait, || registry.register(info.clone()));
+            self.waited += waits;
+            result.map_err(|source| AnnounceError::Record {
+                index,
+                service: rec.service,
+                source,
+            })?;
             self.live.insert(name, rec.clone());
         }
         Ok(())

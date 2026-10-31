@@ -1,4 +1,5 @@
 use super::*;
+use std::time::{Duration, Instant};
 
 use std::cell::RefCell;
 
@@ -421,4 +422,67 @@ fn a_full_daemon_queue_delays_the_announcement_and_never_ends_it() {
         take(&a),
         vec![Call::Unregister(chan("Click").to_lowercase())]
     );
+}
+
+#[test]
+fn a_queue_that_stays_full_ends_the_announcement_after_the_wait() {
+    let cfg = config();
+    let state = DeviceState::from_config(&cfg);
+    let wait = Duration::from_millis(30);
+    let mut a = Announcer::new(FakeRegistry::default()).with_again_wait(wait);
+    a.registry().busy.set(u32::MAX);
+    let started = Instant::now();
+    let err = a.announce(&records(&state, &cfg, HOST, IP)).unwrap_err();
+    assert!(started.elapsed() >= wait, "{:?}", started.elapsed());
+    assert!(
+        matches!(
+            err,
+            AnnounceError::Record {
+                index: 0,
+                source: mdns_sd::Error::Again,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(take(&a).is_empty());
+}
+
+#[test]
+fn every_wait_for_a_full_queue_is_counted() {
+    let cfg = config();
+    let mut state = DeviceState::from_config(&cfg);
+    let mut a = Announcer::new(FakeRegistry::default());
+    assert_eq!(a.waited(), 0);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(a.waited(), 0, "a free queue waits for nothing");
+    state.tx[0] = "Click".into();
+    a.registry().busy.set(3);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(a.waited(), 3, "registration");
+    state.tx[0] = cfg.tx[0].clone();
+    a.registry().busy.set(4);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(a.waited(), 7, "withdrawal");
+}
+
+#[test]
+fn a_real_daemon_takes_more_records_than_its_queue_holds() {
+    // mdns-sd queues 100 commands; iemmixer's device has about 200 records.
+    let daemon = ServiceDaemon::new().unwrap();
+    let recs: Vec<ServiceRecord> = (0..300)
+        .map(|i| ServiceRecord {
+            service: CHAN_SERVICE,
+            instance: format!("{i}@test-device"),
+            host: HOST.to_string(),
+            ip: IP,
+            port: 4455,
+            txt: vec![format!("id={i}")],
+        })
+        .collect();
+    let mut a = Announcer::new(daemon);
+    let announced = a.announce(&recs);
+    eprintln!("waits for the full queue: {}", a.waited());
+    let _status = a.registry().shutdown();
+    announced.unwrap();
 }
