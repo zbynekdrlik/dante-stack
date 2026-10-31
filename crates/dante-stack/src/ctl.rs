@@ -720,6 +720,8 @@ fn tx_part(j: &mut Json, media: &Media) {
         j.close(']');
         j.num("late_max_us", lane.late_max_ns / 1_000);
         j.num("send_max_us", lane.send_max_ns / 1_000);
+        j.num("age_max_us", lane.age_max_ns / 1_000);
+        j.num("over_latency", lane.over_latency);
         j.close('}');
     }
     j.close(']');
