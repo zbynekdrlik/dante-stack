@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4 (2026-10-31)
+
+- Fix (iemmixer, dstack #1): on the box (29 subscriptions) the mic's record still never won. The query thread sent its due queries in one burst (one per subscribed name), and the wireless mic receiver answers none of a burst; at every re-query the burst came again, because the Yamaha card's 18 channels never answer. Reproduced from dev1 with the box's 29 names (the mic unresolved, ARC at 8 s). Queries are now spaced 20 ms apart (`instance::PACE`), with answers read in between: from dev1 the same 29 names give the mic's record in 0.5 s (1 ms, fpp 32). The stage rack answers direct queries too (250 µs, fpp 2..4).
+
 ## 0.4.3 (2026-10-31)
 
 - Fix (iemmixer, dstack #1 problem C): the wireless mic's flow still went up from its ARC read (fpp 4, then 0x0314 steps, no latency) and its channel record never replaced it, so the approved override did not show. Three changes:
