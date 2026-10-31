@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.3 (2026-10-31)
+
+- Fix (iemmixer, dstack #1 problem C): the wireless mic's flow still went up from its ARC read (fpp 4, then 0x0314 steps, no latency) and its channel record never replaced it, so the approved override did not show. Three changes:
+  - A direct instance query not answered is asked again after 1, 2 and 4 s, then every 10 s (`subscribe::instance::QUICK_NS`, `requery_after`). A first query at the device's start can be lost among its own announcements.
+  - The network resolver keeps a name from ARC while its direct query is younger than 8 s and has no answer (`instance::GRACE_NS`, `Instances::young`). ARC's settle is 5 s, so the record usually wins.
+  - The manager re-resolves its routed channels every tick. When a channel's record changes (flow control, latency, fpp range or slots), the channel leaves its flow, the flow ends (stopped if granted, given up if still asked), and it is asked for again from the new record.
+
 ## 0.4.2 (2026-10-31)
 
 - Fix (iemmixer, dstack #1): a per-flow delay below one pump block did not delay a packet's first frame, because the pump reads whole blocks. At a block of 16, the mic's delay of 8 (playout 32 at P 24) played like 0, with 200-235 holes per 45 s, while a delay of 16 played clean. The delay is now rounded up to whole blocks, and the status's `playout` is what that gives (the mic at override 32: delay 16, playout 40). `below_advertised` compares that value.

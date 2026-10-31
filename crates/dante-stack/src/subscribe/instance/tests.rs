@@ -133,8 +133,8 @@ fn a_wanted_instance_is_asked_answered_and_used_until_it_ages() {
     assert_eq!(t.lookup(DEVICE, CHANNEL, 0), None);
     let name = key(&inst());
     assert_eq!(t.due(0), [Ask::Instance(name.clone())]);
-    assert_eq!(t.due(REQUERY_NS - 1), [], "not again within 10 s");
-    assert_eq!(t.due(REQUERY_NS), [Ask::Instance(name.clone())]);
+    assert_eq!(t.due(QUICK_NS[0] - 1), [], "not again within 1 s");
+    assert_eq!(t.due(QUICK_NS[0]), [Ask::Instance(name.clone())]);
     assert_eq!(t.answer(&answer(true), REQUERY_NS + 1), 1);
     let a = t
         .lookup(DEVICE, CHANNEL, REQUERY_NS + 2)
@@ -345,4 +345,53 @@ fn dropping_the_resolver_stops_its_thread() {
     assert!(!stop.load(Ordering::Relaxed));
     drop(i);
     assert!(stop.load(Ordering::Relaxed));
+}
+
+#[test]
+fn an_unanswered_name_is_asked_at_1_2_4_then_every_10_s() {
+    let mut t = Table::default();
+    t.lookup(DEVICE, CHANNEL, 0);
+    let mut asked = Vec::new();
+    let mut now = 0;
+    while now <= 40 * S {
+        t.lookup(DEVICE, CHANNEL, now);
+        if !t.due(now).is_empty() {
+            asked.push(now / (S / 10));
+        }
+        now += S / 10;
+    }
+    // In tenths of a second: 0, +1 s, +2 s, +4 s, then +10 s each.
+    assert_eq!(asked, [0, 10, 30, 70, 170, 270, 370]);
+    assert_eq!(requery_after(1), QUICK_NS[0]);
+    assert_eq!(requery_after(3), QUICK_NS[2]);
+    assert_eq!(requery_after(4), REQUERY_NS);
+}
+
+#[test]
+fn a_name_is_young_until_answered_or_past_its_grace() {
+    let mut t = Table::default();
+    assert!(!t.young(DEVICE, CHANNEL, 0), "never wanted");
+    t.lookup(DEVICE, CHANNEL, S);
+    assert!(t.young(DEVICE, CHANNEL, S + GRACE_NS - 1));
+    assert!(!t.young(DEVICE, CHANNEL, S + GRACE_NS), "past its grace");
+    t.due(S);
+    assert_eq!(t.answer(&answer(true), 2 * S), 1);
+    assert!(!t.young(DEVICE, CHANNEL, 2 * S), "answered");
+}
+
+#[test]
+fn only_a_running_resolver_keeps_a_young_name_from_arc() {
+    let t = Arc::new(std::sync::atomic::AtomicU64::new(S));
+    let mut i = Instances::with_clock(Arc::clone(&t));
+    i.lookup(DEVICE, CHANNEL);
+    assert!(!i.young(DEVICE, CHANNEL), "not querying: nothing kept");
+    let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let to = match responder.local_addr().unwrap() {
+        std::net::SocketAddr::V4(a) => a,
+        other => panic!("{other}"),
+    };
+    i.start_to(Ipv4Addr::LOCALHOST, to).unwrap();
+    assert!(i.young(DEVICE, CHANNEL));
+    t.store(S + GRACE_NS, Ordering::Relaxed);
+    assert!(!i.young(DEVICE, CHANNEL), "past its grace");
 }
