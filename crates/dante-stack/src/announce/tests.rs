@@ -1,5 +1,4 @@
 use super::*;
-use std::time::{Duration, Instant};
 
 use std::cell::RefCell;
 
@@ -425,15 +424,12 @@ fn a_full_daemon_queue_delays_the_announcement_and_never_ends_it() {
 }
 
 #[test]
-fn a_queue_that_stays_full_ends_the_announcement_after_the_wait() {
+fn a_queue_that_stays_full_ends_the_announcement_after_its_tries() {
     let cfg = config();
     let state = DeviceState::from_config(&cfg);
-    let wait = Duration::from_millis(30);
-    let mut a = Announcer::new(FakeRegistry::default()).with_again_wait(wait);
-    a.registry().busy.set(u32::MAX);
-    let started = Instant::now();
+    let mut a = Announcer::new(FakeRegistry::default()).with_again_tries(3);
+    a.registry().busy.set(1000);
     let err = a.announce(&records(&state, &cfg, HOST, IP)).unwrap_err();
-    assert!(started.elapsed() >= wait, "{:?}", started.elapsed());
     assert!(
         matches!(
             err,
@@ -445,6 +441,9 @@ fn a_queue_that_stays_full_ends_the_announcement_after_the_wait() {
         ),
         "{err:?}"
     );
+    // The first call and 3 more, then the error.
+    assert_eq!(a.registry().busy.get(), 1000 - 4);
+    assert_eq!(a.waited(), 3);
     assert!(take(&a).is_empty());
 }
 
