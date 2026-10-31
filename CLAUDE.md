@@ -1,8 +1,8 @@
-# dante-stack
-
-> **Renamed 31.10.2026: this project was `dante-stack` and is now `dstack`** (repo, account, paths; `dante-stack` is `dstack`, `dante-asio` is `dasio`). The repo content still uses the old names. Do issue #14 first, then delete this note.
+# dstack
 
 The one Dante expert project. All Dante code lives here: discovery, ARC, CMC, flows, media TX/RX, clock client, health. Applications depend on a tagged release by Cargo git tag; nobody keeps a copy or a local patch.
+
+Repo `zbynekdrlik/dstack` (renamed from dante-stack on 31.10.2026). The crates keep their names (`dante-stack`, `dante-audio-io`, binary `dante-stack-dev`): consumers write `git = "https://github.com/zbynekdrlik/dstack"`.
 
 Start from `docs/HANDOVER.md`, then `docs/design/2026-10-30-shared-dante-stack.md`.
 
@@ -10,7 +10,7 @@ Start from `docs/HANDOVER.md`, then `docs/design/2026-10-30-shared-dante-stack.m
 - A Dante bug reported by a consumer is fixed here, with a catalog test, and released; the consumer only moves the version.
 - A field bug is closed only with a recorded capture and a replay test (quirk catalog).
 - Branches: `dev` and `main` only; PRs dev → main; merge commits.
-- Public repo: no site data. Addresses and real device or channel names live only in `~/.config/dante-stack/`.
+- Public repo: no site data. Addresses and real device or channel names live only in `~/.config/dstack/`.
 - dantesync is the only clock owner on a PC; the stack never opens UDP 319/320.
 - Never change another device's subscriptions without the owner's approval. Tests subscribe our own device to itself.
 - Every message to the owner in Slovak; code, commits and docs in English.

@@ -4,7 +4,7 @@
 //! The device binary's command line (`--help`: [`super::usage`]), Linux
 //! only, as a library function: Cargo never builds a dependency's binaries,
 //! so each application keeps a thin binary that calls [`main`] with its own
-//! [`Build`] (dante-stack's `dante-stack-dev`, iemmixer's `iem-dante-dev`).
+//! [`Build`] (dstack's `dante-stack-dev`, iemmixer's `iem-dante-dev`).
 //!
 //! The device itself is `crate::host`: here it is prepared with no engine
 //! channel and started with SIGTERM and SIGINT ending it

@@ -5,7 +5,7 @@
 //! `docs/superpowers/plans/2026-10-26-gen3-phase-c-engine-on-linux.md`
 //! Task 2): what `iem-dante-dev` ran in its `main`, so the engine can host
 //! the device in its own process (Task 3) and the standalone binary stays a
-//! thin caller. Linux and Windows (dante-asio plan Task 2: on Windows no
+//! thin caller. Linux and Windows (dasio plan Task 2: on Windows no
 //! control socket, a console Ctrl+C for the signals, the NIC's facts from
 //! `GetAdaptersAddresses`).
 //!
@@ -648,7 +648,7 @@ async fn serve_device(
     );
     #[cfg(unix)]
     let ctl_server = ctl::serve_control(s.listener, Arc::clone(&s.media));
-    // No control socket on Windows (dante-asio's tray reads the shared memory).
+    // No control socket on Windows (dasio's tray reads the shared memory).
     #[cfg(windows)]
     let ctl_server = std::future::pending::<std::io::Result<()>>();
     daemon::serve(

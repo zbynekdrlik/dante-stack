@@ -460,7 +460,7 @@ fn the_block_is_16_to_256_and_the_work_margin_at_least_one_block() {
     assert_eq!((cfg.block, cfg.work_margin), (16, 96));
     let cfg = DeviceConfig::from_toml(&with("block = 32")).unwrap();
     assert_eq!(cfg.block, 32);
-    // dante-asio: the DAW's buffer is the block, up to 256 (W at least one).
+    // dasio: the DAW's buffer is the block, up to 256 (W at least one).
     for block in [64, 128, 256] {
         let cfg =
             DeviceConfig::from_toml(&with(&format!("block = {block}\nwork_margin = {block}")))

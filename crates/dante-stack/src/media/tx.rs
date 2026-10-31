@@ -746,7 +746,7 @@ impl Schedule {
     pub fn due(&mut self, now: u64) -> Option<u64> {
         let send = self.next.saturating_add(self.fpp);
         if now > send.saturating_add(self.max_lag) || send > now.saturating_add(DISCONTINUITY) {
-            // Why (dante-asio, Windows): the lag past the send time, or a
+            // Why (dasio, Windows): the lag past the send time, or a
             // jump back. Rare (each one is a restart), so logged.
             tracing::warn!(
                 lag = now as i64 - send as i64,
@@ -1078,7 +1078,7 @@ pub(crate) fn ask_realtime(priority: i32) -> bool {
 }
 
 /// On Windows: the thread at THREAD_PRIORITY_TIME_CRITICAL, whatever
-/// `priority`: 31 in a REALTIME_PRIORITY_CLASS process (dante-asio's device
+/// `priority`: 31 in a REALTIME_PRIORITY_CLASS process (dasio's device
 /// process sets it; its threads have their own cores), above MMCSS's audio
 /// threads, which left the pump short of time on the FOH PC (missed blocks
 /// and TX holes at W 0.33 ms). `false` when Windows refuses it.

@@ -9,7 +9,7 @@ Consumers today: dante-asio (MVP passed the owner's listening test on 2026-10-30
 ## Machines
 
 - dev1: this project's account. No local Dante network access is assumed.
-- The FOH PC (MCP `win-ableton-foh`), the SNV Resolume PC with Dante Virtual Soundcard (MCP `win-resolume-snv`), the IEM PC and the Gen 3 box. Addresses are in `~/.config/dante-stack/SITE.md`.
+- The FOH PC (MCP `win-ableton-foh`), the SNV Resolume PC with Dante Virtual Soundcard (MCP `win-resolume-snv`), the IEM PC and the Gen 3 box. Addresses are in `~/.config/dstack/SITE.md`.
 
 ## What else acts on the machines
 
@@ -24,7 +24,7 @@ CI first: GitHub-hosted Linux and Windows. For a real Dante test, subscribe our 
 
 ## Site facts
 
-Private, never in this repository: `~/.config/dante-stack/SITE.md`, with the tools beside it.
+Private, never in this repository: `~/.config/dstack/SITE.md`, with the tools beside it.
 
 ## Runners
 

@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.2.8"
 edition = "2024"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/zbynekdrlik/dante-stack"
+repository = "https://github.com/zbynekdrlik/dstack"
 authors = ["zbynekdrlik"]
 
 # cargo-mutants builds every mutant with this profile (.cargo/mutants.toml):

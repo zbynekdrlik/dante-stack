@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 repository.workspace = true
 authors.workspace = true
-description = "The callback contract (Process, Block, StreamStats) and the stream histograms, shared by dante-stack's pump and the applications that implement Process (iemmixer's iem-audio-io re-exports them)"
+description = "The callback contract (Process, Block, StreamStats) and the stream histograms, shared by dstack's pump and the applications that implement Process (iemmixer's iem-audio-io re-exports them)"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iem_rtsan)"] }

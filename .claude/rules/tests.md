@@ -7,7 +7,7 @@ paths:
   - ".cargo/mutants.toml"
 ---
 
-# Tests in dante-stack
+# Tests in dstack
 
 - **Whole-device tests** (`tests/system_clock.rs`): the host refuses loopback (no MAC, unreachable for Dante), so run the device on the box's routed IPv4 (`UdpSocket::connect` to 192.0.2.1:9, then `local_addr`; sends nothing). Each test binds the Dante ports on that address: take the file's `ONE_DEVICE` lock.
 - **Timing on CI and dev boxes:** a normal-priority TX thread wakes over 1 ms late now and then; at the test config's 1 ms latency that restarts the TX schedule (a 2 to 5 ms RX dropout). Whole-path tests use a 10 ms latency, take their counts after the start (0.1 s of RX read), and require no restart and every packet within the latency; real-time lateness is the hardware gate's, never a shared runner's.
