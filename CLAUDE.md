@@ -1,5 +1,7 @@
 # dante-stack
 
+> **Renamed 31.10.2026: this project was `dante-stack` and is now `dstack`** (repo, account, paths; `dante-stack` is `dstack`, `dante-asio` is `dasio`). The repo content still uses the old names. Do issue #14 first, then delete this note.
+
 The one Dante expert project. All Dante code lives here: discovery, ARC, CMC, flows, media TX/RX, clock client, health. Applications depend on a tagged release by Cargo git tag; nobody keeps a copy or a local patch.
 
 Start from `docs/HANDOVER.md`, then `docs/design/2026-10-30-shared-dante-stack.md`.
