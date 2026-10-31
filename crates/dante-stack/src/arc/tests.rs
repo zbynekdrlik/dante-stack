@@ -981,6 +981,7 @@ fn warnings_of(f: impl FnOnce()) -> String {
         .with_ansi(false)
         .with_max_level(tracing::Level::WARN)
         .finish();
+    crate::test_log::undecided();
     tracing::subscriber::with_default(subscriber, f);
     let bytes = sink.0.lock().unwrap().clone();
     String::from_utf8(bytes).unwrap()
