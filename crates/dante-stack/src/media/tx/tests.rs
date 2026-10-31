@@ -1428,3 +1428,46 @@ fn a_stall_within_the_latency_is_counted_as_late_packets() {
     );
     assert!(lane.send_max_ns < lane.late_max_ns, "{lane:?}");
 }
+
+/// Catalog: gen3 at 250 µs and the IEM card at 250 µs (31.10.2026). The
+/// bins measure from the packet's due time (its last sample plus the
+/// margin) and their first edge is 250 µs, so a packet a receiver calls
+/// late (past the latency since its stamp) counted as on time: the box
+/// read late_max 204 µs while the FOH console read 770 µs and pops. The
+/// lane counts each packet's age since its stamp against the advertised
+/// latency.
+#[test]
+fn a_packet_older_than_the_latency_since_its_stamp_counts_as_over_latency() {
+    let mut cfg = cfg();
+    cfg.tx_latency_ns = Some(500_000);
+    let shared =
+        Arc::new(TxShared::new(cfg, Ipv4Addr::LOCALHOST, Vec::new().into(), 1, &[]).unwrap());
+    let mut rig = Rig::with(shared);
+    let (slot, _) = rig.flow(vec![Some(1), Some(2)]);
+    let start = T;
+    rig.tx.step(Some(start), 0);
+    // 50 µs past due: well under the first bin's edge, but 333 µs (fpp 32) +
+    // the 250 µs margin + 50 µs since the stamp, past the 500 µs latency.
+    let due = first_due_ns(start);
+    let began = Instant::now();
+    rig.tx.step(Some(due + 50_000), 0);
+    let took = nanos(began.elapsed());
+    let lane = rig.shared.lane(slot);
+    assert_eq!(
+        lane.late_bins[0], lane.packets,
+        "the bins call it on time: {lane:?}"
+    );
+    assert!(lane.over_latency >= 1, "{lane:?}");
+    let age = ns_of(FPP, RATE) + TX_MARGIN_NS + 50_000;
+    assert!(
+        (age..age + took + 1_000).contains(&lane.age_max_ns),
+        "{lane:?}, step took {took} ns"
+    );
+}
+
+#[test]
+fn a_packet_at_the_latency_still_plays_and_one_ns_more_is_late() {
+    assert!(!over_latency(250_000, 250_000));
+    assert!(over_latency(250_001, 250_000));
+    assert!(!over_latency(0, 250_000));
+}

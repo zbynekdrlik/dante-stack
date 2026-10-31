@@ -491,6 +491,8 @@ pub struct LaneStats {
     late: [AtomicU64; LATE_BINS],
     late_max_ns: AtomicU64,
     send_max_ns: AtomicU64,
+    age_max_ns: AtomicU64,
+    over_latency: AtomicU64,
 }
 
 /// One slot's counts since the device started (every flow it carried).
@@ -516,6 +518,14 @@ pub struct LaneCounts {
     pub late_max_ns: u64,
     /// The longest single send since the device started, ns (a maximum).
     pub send_max_ns: u64,
+    /// The oldest any packet was when its send returned, ns since its
+    /// first sample's time (its stamp): what a receiver measures, less the
+    /// network (a maximum).
+    pub age_max_ns: u64,
+    /// Packets whose age past their stamp was over the advertised latency:
+    /// a receiver at that latency counts each one late (Dante Controller's
+    /// Latency tab), whatever bin it fell in.
+    pub over_latency: u64,
 }
 
 /// The control side's half of [`TxShared`]: the table, and the keepalive
@@ -686,6 +696,8 @@ impl TxShared {
             late_bins: std::array::from_fn(|i| l.late[i].load(Ordering::Relaxed)),
             late_max_ns: l.late_max_ns.load(Ordering::Relaxed),
             send_max_ns: l.send_max_ns.load(Ordering::Relaxed),
+            age_max_ns: l.age_max_ns.load(Ordering::Relaxed),
+            over_latency: l.over_latency.load(Ordering::Relaxed),
         }
     }
 
@@ -801,6 +813,12 @@ fn nanos(d: std::time::Duration) -> u64 {
     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// Whether a packet `age_ns` past its stamp is late at a receiver whose
+/// latency is `latency_ns`: at the latency itself it still plays.
+pub fn over_latency(age_ns: u64, latency_ns: u64) -> bool {
+    age_ns > latency_ns
+}
+
 /// The media clock a schedule runs on: the samples at `rate` up to
 /// `margin_ns` before `now_ns`.
 pub fn send_clock(now_ns: u64, rate: u32, margin_ns: u64) -> u64 {
@@ -835,6 +853,9 @@ pub struct Transmitter {
     max_lag: u64,
     /// The device's `tx_margin_ns`.
     margin_ns: u64,
+    /// The device's advertised latency, ns: a packet older than this past
+    /// its stamp is late at a receiver.
+    latency_ns: u64,
 }
 
 impl Transmitter {
@@ -853,6 +874,7 @@ impl Transmitter {
             rate,
             max_lag: clock::to_samples(shared.cfg.advertised_latency_ns(), rate),
             margin_ns: shared.cfg.tx_margin_ns,
+            latency_ns: shared.cfg.advertised_latency_ns(),
             shared,
         }
     }
@@ -962,6 +984,7 @@ impl Transmitter {
             rate,
             max_lag,
             margin_ns,
+            latency_ns,
             ..
         } = self;
         let rings: &[Ring] = &shared.rings;
@@ -1022,6 +1045,12 @@ impl Transmitter {
                 let due =
                     ns_of(stamp.saturating_add(plan.fpp.into()), *rate).saturating_add(*margin_ns);
                 let late = left.saturating_sub(due);
+                // A receiver's lateness: the arrival past the stamp.
+                let age = left.saturating_sub(ns_of(stamp, *rate));
+                stats.age_max_ns.fetch_max(age, Ordering::Relaxed);
+                if over_latency(age, *latency_ns) {
+                    stats.over_latency.fetch_add(1, Ordering::Relaxed);
+                }
                 stats.late[late_bin(late)].fetch_add(1, Ordering::Relaxed);
                 stats.late_max_ns.fetch_max(late, Ordering::Relaxed);
                 stats.send_max_ns.fetch_max(took, Ordering::Relaxed);

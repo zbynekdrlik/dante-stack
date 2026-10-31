@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.8 (2026-10-31)
+
+- Fix: the TX counters now measure what a receiver measures. Each TX flow in the status gains `age_max_us` (the oldest a packet was, since its stamp, when its send returned) and `over_latency` (packets older than the advertised latency, which a receiver at that latency counts late). Before, `late_bins` and `late_max_us` measured from the due time (last sample plus margin) with a first edge of 250 µs: gen3 at 250 µs read late_max 204 µs while the FOH console read 770 µs and the PA popped (dstack #1).
+
 ## 0.4.7 (2026-10-31)
 
 - Withdrawn: `timing = "normal"` is refused at setup. On the Resolume PC (v0.4.2), its Windows timer-only waits made SongPlayer's TX and pump late: the FOH console's Dante Controller Latency tab showed songplayer at peak 32.1 ms, average 14.7 ms, with 2562 late packets, and the PA popped. It stays refused until it is fixed and proven on a receiver's latency records (dstack #1).
