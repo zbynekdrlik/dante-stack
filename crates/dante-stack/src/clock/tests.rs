@@ -695,3 +695,9 @@ mod os {
         assert_eq!((clock.k_ns(), freq.load(Ordering::Relaxed)), (None, 7));
     }
 }
+
+#[test]
+fn the_normal_profile_waits_on_the_timer_and_low_latency_spins() {
+    assert_eq!(wait_mode_for(TimingProfile::LowLatency), WaitMode::Spin);
+    assert_eq!(wait_mode_for(TimingProfile::Normal), WaitMode::Timer);
+}

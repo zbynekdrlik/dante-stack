@@ -79,11 +79,17 @@ impl Drop for Timer {
 /// the last [`SPIN_NS`], then a spin.
 pub fn sleep_until_monotonic(target: i64) {
     let left = target - monotonic_ns();
-    if left > SPIN_NS {
+    // The timer mode (problem A's measurement): the whole wait on the
+    // timer, no core spun.
+    let spin = match super::wait_mode() {
+        super::WaitMode::Spin => SPIN_NS,
+        super::WaitMode::Timer => 0,
+    };
+    if left > spin {
         let h = timer();
         if !h.is_null() {
             // Relative due time: negative, in 100 ns units.
-            let due = -((left - SPIN_NS) / 100);
+            let due = -((left - spin) / 100);
             // SAFETY: a valid timer handle, a valid due time, no callback.
             let set = unsafe { SetWaitableTimer(h, &due, 0, None, std::ptr::null(), 0) };
             if set != 0 {
@@ -91,12 +97,15 @@ pub fn sleep_until_monotonic(target: i64) {
                 unsafe { WaitForSingleObject(h, INFINITE) };
             }
         } else {
-            std::thread::sleep(std::time::Duration::from_nanos((left - SPIN_NS) as u64));
+            std::thread::sleep(std::time::Duration::from_nanos((left - spin) as u64));
         }
     }
     // The spin yields: the media threads share cores on Windows (the FOH
     // PC gives the device two), and a plain spin kept the RX thread off its
     // core (RX packets up to 48 ms late, 2026-10-29).
+    if spin == 0 {
+        return;
+    }
     while monotonic_ns() < target {
         std::thread::yield_now();
     }

@@ -1050,7 +1050,7 @@ fn run(clock: &dyn PtpClock, shared: Arc<TxShared>) {
     } else {
         warn!(
             priority = TX_PRIORITY,
-            "TX thread runs at normal priority: RLIMIT_RTPRIO allows no SCHED_FIFO"
+            "TX thread runs at normal priority: the normal timing profile, or real-time priority refused"
         );
     }
     place("TX thread", shared.cfg.io_cpu);
@@ -1067,6 +1067,9 @@ fn run(clock: &dyn PtpClock, shared: Arc<TxShared>) {
 /// asks too ([`super::rx`]).
 #[cfg(target_os = "linux")]
 pub(crate) fn ask_realtime(priority: i32) -> bool {
+    if crate::clock::profile() == crate::device::TimingProfile::Normal {
+        return false;
+    }
     let param = libc::sched_param {
         sched_priority: priority,
     };
@@ -1084,6 +1087,9 @@ pub(crate) fn ask_realtime(priority: i32) -> bool {
 /// and TX holes at W 0.33 ms). `false` when Windows refuses it.
 #[cfg(windows)]
 pub(crate) fn ask_realtime(_priority: i32) -> bool {
+    if crate::clock::profile() == crate::device::TimingProfile::Normal {
+        return false;
+    }
     use windows_sys::Win32::System::Threading::{
         GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
     };
