@@ -1357,6 +1357,24 @@ fn op_2320_is_answered_with_status_0x30() {
     }
 }
 
+/// Dante Controller's 0x2204, captured on the Dante network (30.10.2026,
+/// dstack #1): a page request from item 1, seq 0x21.
+const DC_2204: [u8; 16] = [
+    0x28, 0x09, 0x00, 0x10, 0x00, 0x21, 0x22, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+];
+
+#[test]
+fn dante_controller_s_0x2204_is_answered_as_the_iem_card_answers_it() {
+    // The IEM card (a Yamaha Dante card) answered this request, in the same
+    // capture, with status 0x0030 and no body: `2809 000a 0021 2204 0030`.
+    // Left unanswered, Dante Controller asked 3 times (dev1, 31.10.2026).
+    let mut dev = Dev::new(config());
+    assert_eq!(
+        reply_bytes(&mut dev, &DC_2204),
+        [0x28, 0x09, 0x00, 0x0a, 0x00, 0x21, 0x22, 0x04, 0x00, 0x30]
+    );
+}
+
 #[test]
 fn a_subscription_is_made_and_answered_as_inferno_answers_it() {
     // inferno answers OK, no body, to every subscription request it can
