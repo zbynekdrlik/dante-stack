@@ -943,3 +943,18 @@ fn flows_that_stay_silent_twice_double_the_wait() {
     assert_eq!(asked, [0, 9, 27]);
     assert_eq!(stopped, [6, 15, 33]);
 }
+
+#[test]
+fn a_status_code_reads_back_as_its_status_and_others_as_none() {
+    for s in [
+        SubStatus::Unresolved,
+        SubStatus::InProgress,
+        SubStatus::TooManyTxFlows,
+        SubStatus::TxFail,
+        SubStatus::Receiving,
+    ] {
+        assert_eq!(SubStatus::from_code(s.code()), Some(s));
+    }
+    assert_eq!(SubStatus::from_code(0), None);
+    assert_eq!(SubStatus::from_code(9), None);
+}

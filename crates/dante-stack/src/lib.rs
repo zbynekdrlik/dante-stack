@@ -103,5 +103,7 @@ pub mod info;
 pub mod media;
 pub mod stream;
 pub mod subscribe;
+#[cfg(test)]
+mod test_log;
 pub mod winsock;
 pub mod wire;

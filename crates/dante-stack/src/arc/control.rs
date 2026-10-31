@@ -12,7 +12,7 @@
 //! - 0x1002, the device's name: no body; the reply's body is the name,
 //!   NUL-ended.
 //! - 0x1000, the counts: no body; TX at body bytes 2–3, RX at 4–5.
-//! - 0x3000, the RX channels, paged ([`super::client::page_request`]):
+//! - 0x3000, the RX channels ([`rx_channels`]), paged ([`super::client::page_request`]):
 //!   `[slots, count]`, then `slots` 20-byte descriptors `id, flags,
 //!   common, tx channel, tx device, name, status (2), 0, 0`; offsets count
 //!   from the datagram's first byte.
@@ -37,6 +37,7 @@ use tracing::debug;
 
 use super::client::{Exchange, Page, ReadError, START, page_request, read_list, read_tx, table};
 use super::op;
+use crate::subscribe::SubStatus;
 use crate::wire::{HEADER_LEN, STATUS_MORE, STATUS_OK, read_u16, request, string_at};
 
 /// The device's own name (netaudio's `device_name`; [`op::DEVICE_NAME`]).
@@ -169,16 +170,55 @@ pub fn labels(c: &mut impl Call) -> Result<Labels, ReadError> {
     })
 }
 
-/// A page of 0x3000 (the RX channels) with status `status`: each item's id
-/// and name (a channel without a name is counted, not listed).
-fn rx_page(status: u16, body: &[u8]) -> Option<Page<(u16, String)>> {
+/// One RX channel as 0x3000 lists it: its label and, when subscribed, the
+/// TX channel and device it asks for and the subscription's status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RxChannel {
+    /// The channel's number (1 up).
+    pub channel: u16,
+    pub label: String,
+    /// The subscribed TX channel's name (`None`: not subscribed).
+    pub tx_channel: Option<String>,
+    /// The subscribed TX device's name (`None`: not subscribed).
+    pub tx_device: Option<String>,
+    /// The status code (descriptor bytes 12–15; 0 when not subscribed).
+    pub status: u32,
+}
+
+impl RxChannel {
+    /// The status, when its code is one the stack knows (inferno's codes,
+    /// which our own server sends).
+    pub fn sub_status(&self) -> Option<SubStatus> {
+        SubStatus::from_code(self.status)
+    }
+}
+
+/// A non-empty name at offset `at` of the datagram's body (0: none).
+fn name_at(body: &[u8], at: u16) -> Option<String> {
+    (at != 0)
+        .then(|| string_at(body, at))
+        .flatten()
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+}
+
+/// A page of 0x3000 (the RX channels) with status `status`: each named
+/// channel (a channel without a name is counted, not listed).
+fn rx_page(status: u16, body: &[u8]) -> Option<Page<RxChannel>> {
     let (slots, count) = table(body, RX_ITEM)?;
     let items = (0..count)
         .filter_map(|i| {
             let at = 2 + i * RX_ITEM;
-            let id = read_u16(body, at).filter(|&id| id > 0)?;
-            let name = string_at(body, read_u16(body, at + 10)?).filter(|n| !n.is_empty())?;
-            Some((id, name.to_string()))
+            let channel = read_u16(body, at).filter(|&id| id > 0)?;
+            let label = name_at(body, read_u16(body, at + 10)?)?;
+            let status = u32::from_be_bytes(body.get(at + 12..at + 16)?.try_into().ok()?);
+            Some(RxChannel {
+                channel,
+                label,
+                tx_channel: name_at(body, read_u16(body, at + 6)?),
+                tx_device: name_at(body, read_u16(body, at + 8)?),
+                status,
+            })
         })
         .collect();
     Some(Page {
@@ -189,10 +229,23 @@ fn rx_page(status: u16, body: &[u8]) -> Option<Page<(u16, String)>> {
     })
 }
 
+/// Every RX channel of the device with its subscription (0x1000's RX
+/// count, then 0x3000 page by page).
+pub fn rx_channels(c: &mut impl Call) -> Result<Vec<RxChannel>, ReadError> {
+    let (_, counts) = ok(c.call(op::COUNTS, &[])?, op::COUNTS)?;
+    let total = usize::from(read_u16(&counts, 4).ok_or(ReadError::Malformed { op: op::COUNTS })?);
+    rx_list(c, total)
+}
+
+fn rx_list(c: &mut impl Call, total: usize) -> Result<Vec<RxChannel>, ReadError> {
+    read_list(&mut Pages(c), op::RX_CHANNELS, total, rx_page)
+}
+
 /// The RX channels' labels of a device with `total` RX channels.
 fn rx_names(c: &mut impl Call, total: usize) -> Result<BTreeMap<u16, String>, ReadError> {
-    Ok(read_list(&mut Pages(c), op::RX_CHANNELS, total, rx_page)?
+    Ok(rx_list(c, total)?
         .into_iter()
+        .map(|ch| (ch.channel, ch.label))
         .collect())
 }
 

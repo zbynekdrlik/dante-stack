@@ -123,6 +123,19 @@ impl SubStatus {
             SubStatus::Receiving => 0x0101_0009,
         }
     }
+
+    /// The status of `code`, when it is one of [`SubStatus::code`]'s.
+    pub fn from_code(code: u32) -> Option<SubStatus> {
+        [
+            SubStatus::Unresolved,
+            SubStatus::InProgress,
+            SubStatus::TooManyTxFlows,
+            SubStatus::TxFail,
+            SubStatus::Receiving,
+        ]
+        .into_iter()
+        .find(|s| s.code() == code)
+    }
 }
 
 /// One flow: its slot and which of the slot's flows it is.
