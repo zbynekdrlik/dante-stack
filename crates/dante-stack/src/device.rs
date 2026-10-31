@@ -122,10 +122,17 @@ pub struct DeviceConfig {
     /// out.
     #[serde(default)]
     pub pump_cpu: Option<usize>,
-    /// The CPU the RX and TX threads run on, below [`MAX_CPU`]; anywhere
-    /// when left out.
+    /// The CPU the TX thread runs on, and the RX thread unless `rx_cpu`
+    /// names another, below [`MAX_CPU`]; anywhere when left out.
     #[serde(default)]
     pub io_cpu: Option<usize>,
+    /// The CPU the RX thread runs on, below [`MAX_CPU`]; `io_cpu` when left
+    /// out. A core apart from TX's keeps a received flood off the sends
+    /// (gen3 on the N100 box, 31.10.2026: 7 stage flows at fpp 4 on the TX
+    /// core delayed sends by up to 247 µs); the core the NIC's interrupts
+    /// land on is a natural choice.
+    #[serde(default)]
+    pub rx_cpu: Option<usize>,
     /// A playout point below a transmitter's advertised latency, samples,
     /// by its device name (case aside). Only with the owner's approval per
     /// device (dstack #1, 31.10.2026: by default an advertised latency is
@@ -201,6 +208,11 @@ impl DeviceConfig {
         self.tx_latency_ns.unwrap_or(self.latency_ns)
     }
 
+    /// The CPU the RX thread runs on: `rx_cpu`, else `io_cpu`.
+    pub fn rx_thread_cpu(&self) -> Option<usize> {
+        self.rx_cpu.or(self.io_cpu)
+    }
+
     fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
         if !valid_device_name(&self.name) {
@@ -271,7 +283,11 @@ impl DeviceConfig {
                  below tx_fpp_max frames + tx_margin_ns + {TX_SEND_SLACK_NS} ns"
             ));
         }
-        for (field, cpu) in [("pump_cpu", self.pump_cpu), ("io_cpu", self.io_cpu)] {
+        for (field, cpu) in [
+            ("pump_cpu", self.pump_cpu),
+            ("io_cpu", self.io_cpu),
+            ("rx_cpu", self.rx_cpu),
+        ] {
             if cpu.is_some_and(|c| c >= MAX_CPU) {
                 out.push(format!("{field}: 0 to {}", MAX_CPU - 1));
             }

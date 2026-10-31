@@ -214,7 +214,7 @@ impl Media {
         match rx::spawn(
             Arc::clone(&self.clock),
             Arc::clone(&self.rx),
-            self.tx.cfg.io_cpu,
+            self.tx.cfg.rx_thread_cpu(),
         ) {
             Ok(rx) => Ok(Threads { tx, rx }),
             Err(e) => {
