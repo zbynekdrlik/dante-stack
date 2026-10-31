@@ -21,6 +21,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceInfo, TxtProperty};
@@ -234,6 +235,9 @@ pub struct Announcer<R: Registry> {
     live: BTreeMap<String, ServiceRecord>,
     /// [`AGAIN_TRIES`], fewer in tests.
     again_tries: u64,
+    /// The records the last announcement made the registered set, for
+    /// [`responder::Responder`].
+    published: Arc<Mutex<Vec<ServiceRecord>>>,
     /// Waits for a full command queue so far.
     waited: u64,
 }
@@ -244,8 +248,15 @@ impl<R: Registry> Announcer<R> {
             registry,
             live: BTreeMap::new(),
             again_tries: AGAIN_TRIES,
+            published: Arc::default(),
             waited: 0,
         }
+    }
+
+    /// The records the last announcement made the registered set (shared:
+    /// the responder on the device's own address reads them).
+    pub fn published(&self) -> Arc<Mutex<Vec<ServiceRecord>>> {
+        Arc::clone(&self.published)
     }
 
     /// How many times a call waited for mdns-sd's full command queue so far.
@@ -316,9 +327,15 @@ impl<R: Registry> Announcer<R> {
             })?;
             self.live.insert(name, rec.clone());
         }
+        *self
+            .published
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = recs.to_vec();
         Ok(())
     }
 }
+
+pub mod responder;
 
 #[cfg(test)]
 mod tests;

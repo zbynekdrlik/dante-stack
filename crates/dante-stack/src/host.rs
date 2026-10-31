@@ -616,6 +616,13 @@ fn device_thread(
     control: &Control,
     watch: Watch,
 ) -> Result<(), HostError> {
+    // Windows: our records answered from the device's own address too
+    // (a SkipAsSource address's answers leave from the primary one;
+    // dstack #1 problem E).
+    #[cfg(windows)]
+    let _own = crate::announce::responder::Responder::start(served.net.ip, announcer.published())
+        .map_err(|e| warn!(%e, "mDNS answers from the device's address not started"))
+        .ok();
     let served = rt.block_on(serve_device(served, &mut announcer, control, watch));
     let served = settle(control, served);
     let goodbye = goodbye(announcer.registry());
