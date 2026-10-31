@@ -63,6 +63,10 @@ pub const MAX_AGE_NS: u64 = 120_000_000_000;
 pub const MAX_INSTANCES: usize = 64;
 /// A records an unfinished answer keeps at most.
 const MAX_HOSTS: usize = 8;
+/// The gap between two queries the thread sends: a wireless mic receiver
+/// answered no query of a burst of 29 at once (one per subscribed name),
+/// and answered when they came spaced (dev1, 31.10.2026).
+pub const PACE: Duration = Duration::from_millis(20);
 /// The thread's round: queries due are sent, answers read.
 pub const ROUND: Duration = Duration::from_millis(250);
 /// mDNS's group and port.
@@ -435,13 +439,37 @@ fn run(sock: &UdpSocket, to: SocketAddrV4, table: &Mutex<Table>, stop: &AtomicBo
             if let Some(Err(e)) = bytes.map(|b| sock.send_to(&b, to)) {
                 debug!(%e, "instance query not sent");
             }
+            // Spaced, never a burst; answers to earlier ones are read on.
+            read_answers(sock, &mut buf, table, clock, PACE);
         }
-        match sock.recv_from(&mut buf) {
+        read_answers(sock, &mut buf, table, clock, ROUND);
+    }
+}
+
+/// Answers read into `table` for `wait` (each read waits at most the rest).
+fn read_answers(
+    sock: &UdpSocket,
+    buf: &mut [u8],
+    table: &Mutex<Table>,
+    clock: &Clock,
+    wait: Duration,
+) {
+    let until = Instant::now() + wait;
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        // A zero timeout is refused (it would mean "wait forever").
+        if sock.set_read_timeout(Some(left)).is_err() {
+            return;
+        }
+        match sock.recv_from(buf) {
             Ok((n, _)) => {
                 lock(table).answer(&buf[..n], clock.now());
             }
-            // Mostly the round's timeout.
-            Err(e) => trace!(kind = ?e.kind(), "no instance answer this round"),
+            // Mostly the wait's end.
+            Err(e) => {
+                trace!(kind = ?e.kind(), "no instance answer this wait");
+                return;
+            }
         }
     }
 }

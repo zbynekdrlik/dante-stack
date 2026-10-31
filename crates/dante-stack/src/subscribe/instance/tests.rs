@@ -420,7 +420,7 @@ fn the_thread_spaces_its_queries() {
     }
     for w in at.windows(2) {
         assert!(
-            w[1].duration_since(w[0]) >= Duration::from_millis(18),
+            w[1].duration_since(w[0]) >= PACE - Duration::from_millis(2),
             "{:?}",
             w[1].duration_since(w[0])
         );
