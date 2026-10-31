@@ -1125,13 +1125,13 @@ fn an_opcode_inferno_does_not_answer_gets_no_reply() {
     // inferno's catch-all logs the opcode and answers nothing; Dante
     // Controller then asks again after its timeout. Refusing it instead
     // (0xffff) made Dante Controller ask 0x2200 and 0x2204 about 2 250
-    // times a second (#72, 2026-10-26).
+    // times a second (#72, 2026-10-26). 0x2204 is answered since 0.3.5 as
+    // the IEM card answers it (status 0x0030, which the card sends; not a
+    // refusal).
     let mut dev = Dev::new(config());
     dev.state.tx[0] = "Mix 1".into();
     let before = dev.state.clone();
     for (op1, body) in [
-        // Dante Controller's 0x2204 with its captured body.
-        (0x2204, DC_FIRST_PAGE.to_vec()),
         // netaudio's set_latency: not in inferno either (set_name, 0x1001,
         // is answered since v0.2.5).
         (0x1101, vec![0, 0, 0, 5]),
@@ -1355,6 +1355,24 @@ fn op_2320_is_answered_with_status_0x30() {
             [0x27, 0x29, 0x00, 0x0a, 0x01, 0x02, 0x23, 0x20, 0x00, 0x30]
         );
     }
+}
+
+/// Dante Controller's 0x2204, captured on the Dante network (30.10.2026,
+/// dstack #1): a page request from item 1, seq 0x21.
+const DC_2204: [u8; 16] = [
+    0x28, 0x09, 0x00, 0x10, 0x00, 0x21, 0x22, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+];
+
+#[test]
+fn dante_controller_s_0x2204_is_answered_as_the_iem_card_answers_it() {
+    // The IEM card (a Yamaha Dante card) answered this request, in the same
+    // capture, with status 0x0030 and no body: `2809 000a 0021 2204 0030`.
+    // Left unanswered, Dante Controller asked 3 times (dev1, 31.10.2026).
+    let mut dev = Dev::new(config());
+    assert_eq!(
+        reply_bytes(&mut dev, &DC_2204),
+        [0x28, 0x09, 0x00, 0x0a, 0x00, 0x21, 0x22, 0x04, 0x00, 0x30]
+    );
 }
 
 #[test]
@@ -2362,7 +2380,7 @@ fn random_requests_never_panic_and_keep_the_names_valid() {
         let outcome = dev.send(&request(NETAUDIO, seq, op1, op2, &body));
         // No reply only where inferno sends none: op2 not 0, an opcode it
         // does not handle, a body it cannot read.
-        let silent = op2 != 0 || op1 == 0x2204;
+        let silent = op2 != 0;
         let readable = !matches!(
             op1,
             op::TX_MULTICAST_CREATE
@@ -2552,12 +2570,14 @@ async fn the_server_saves_a_rename_and_signals_it() {
 async fn the_server_sends_nothing_for_an_opcode_inferno_does_not_answer() {
     let s = served().await;
     let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    // Dante Controller's 0x2204 and 0x2200 as captured, a request with op2
-    // set, then the counts.
+    // An opcode inferno does not answer (0x2203) with Dante Controller's
+    // page body, 0x2200 as captured, a request with op2 set, then the
+    // counts. (0x2204 was the unanswered one here; it is answered since
+    // 0.3.5.)
     for (seq, op1, op2, body) in [
-        (1, 0x2204, 0, &DC_FIRST_PAGE[..]),
+        (1, 0x2203, 0, &DC_FIRST_PAGE[..]),
         (2, op::TX_FLOWS, 0, &DC_FIRST_PAGE[..]),
-        (3, 0x2204, 0, &DC_FIRST_PAGE[..]),
+        (3, 0x2203, 0, &DC_FIRST_PAGE[..]),
         (4, op::COUNTS, 1, &[][..]),
         (5, op::COUNTS, 0, &[][..]),
     ] {
