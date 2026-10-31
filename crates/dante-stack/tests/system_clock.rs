@@ -520,3 +520,84 @@ fn a_direct_instance_query_reads_our_running_device_s_channel_record() {
     );
     assert_eq!(found.latency_ns, 10_000_000, "the test config's latency");
 }
+
+/// dstack #1 problem E: on Windows, a device on an extra address that
+/// is SkipAsSource (as dasio's and SongPlayer's are, beside the PC's
+/// primary address) must answer mDNS from that address: Dante Controller
+/// read no device whose answers came from the primary address, and read
+/// it in full from its own (dev1, 31.10.2026). CI adds such an address to
+/// the runner's adapter and names it in `DSTACK_SKIP_AS_SOURCE_IP`.
+#[cfg(windows)]
+#[test]
+fn a_device_on_a_skip_as_source_address_answers_mdns_from_it() {
+    use socket2::{Domain, Protocol, Socket, Type};
+    use std::net::SocketAddrV4;
+
+    let extra: Ipv4Addr = std::env::var("DSTACK_SKIP_AS_SOURCE_IP")
+        .expect("CI names the SkipAsSource address in DSTACK_SKIP_AS_SOURCE_IP")
+        .parse()
+        .expect("an IPv4 address");
+    let _one = ONE_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let opts = Options {
+        config: config_in(dir.path(), false),
+        place: Place::Ip(extra),
+        control: dir.path().join("control.sock"),
+    };
+    let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("the device set up");
+    let name = prepared.config().name.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let host = prepared
+        .start(Signals::Report(Arc::clone(&stop)))
+        .expect("the device started");
+    // Dante Controller's way: a multicast query from 5353, the answer
+    // multicast to the group.
+    let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+    sock.set_reuse_address(true).unwrap();
+    sock.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 5353).into())
+        .unwrap();
+    let group = Ipv4Addr::new(224, 0, 0, 251);
+    sock.join_multicast_v4(&group, &extra).unwrap();
+    sock.set_multicast_if_v4(&extra).unwrap();
+    let sock: UdpSocket = sock.into();
+    sock.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let instance = format!("{name}._netaudio-arc._udp.local");
+    let mut q = simple_dns::Packet::new_query(0);
+    q.questions.push(simple_dns::Question::new(
+        simple_dns::Name::new_unchecked(&instance),
+        simple_dns::QTYPE::TYPE(simple_dns::TYPE::SRV),
+        simple_dns::QCLASS::CLASS(simple_dns::CLASS::IN),
+        false,
+    ));
+    let query = q.build_bytes_vec().unwrap();
+    let deadline = Instant::now() + BOUND;
+    let mut sources = Vec::new();
+    let mut buf = [0u8; 9000];
+    let mut next_query = Instant::now();
+    while Instant::now() < deadline && !sources.contains(&extra) {
+        if Instant::now() >= next_query {
+            sock.send_to(&query, (group, 5353)).unwrap();
+            next_query = Instant::now() + Duration::from_secs(1);
+        }
+        let Ok((n, SocketAddr::V4(from))) = sock.recv_from(&mut buf) else {
+            continue;
+        };
+        let Ok(p) = simple_dns::Packet::parse(&buf[..n]) else {
+            continue;
+        };
+        let answers_us = p.answers.iter().any(|rr| {
+            rr.name.to_string().eq_ignore_ascii_case(&instance)
+                && matches!(rr.rdata, simple_dns::rdata::RData::SRV(_))
+        });
+        if answers_us && !sources.contains(from.ip()) {
+            sources.push(*from.ip());
+        }
+    }
+    let stopped = host.stop(Duration::from_secs(5));
+    assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
+    assert!(
+        sources.contains(&extra),
+        "our SRV answer came only from {sources:?}, not from the device's {extra}"
+    );
+}
