@@ -85,8 +85,9 @@ pub const WAKE_NS: u64 = 33_000_000;
 /// the thread); the rest wait for the next pass, at once.
 pub const DRAIN: usize = 64;
 /// The RX thread's `SCHED_FIFO` priority when `RLIMIT_RTPRIO` allows it:
-/// the TX thread's, below dantesync's 50.
-pub const RX_PRIORITY: i32 = 45;
+/// below the TX thread's (a send preempts a receive) and above the engine
+/// pump's.
+pub const RX_PRIORITY: i32 = 44;
 /// The most frames one channel slot of a packet holds (16-bit, one slot).
 const FRAMES_MAX: usize = (MAX_DATAGRAM - MEDIA_HEADER) / 2;
 /// A datagram read; one longer than [`MAX_DATAGRAM`] is refused.

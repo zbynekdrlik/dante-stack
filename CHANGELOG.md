@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.10 (2026-10-31)
+
+- Fix: the TX thread runs at `SCHED_FIFO` 47, above the RX thread's 44 (both were 45). On the gen3 box the two threads share the io core, and with 7 stage flows received (168 k packets/s at fpp 4) the TX thread waited for the RX thread to yield: age_max 239/247 µs at 250 µs and card peaks over 400 µs (iemmixer, v0.4.9). A send now preempts a receive; both stay below dantesync's 50, the engine pump stays at 40 (dstack #1).
+
 ## 0.4.9 (2026-10-31)
 
 - Linux: the TX thread holds a PM QoS request (`/dev/cpu_dma_latency` = 0 µs) while it runs, in the low-latency profile. Cause, found with iemmixer on the N100 box at 250 µs: with the deep idle states (C6, C8, C10) on, the IEM card read peak 490 µs and late packets; with them off, peak 240 µs and none in 300 s. The time comes after `send_to`, where no counter of ours sees it. The device is root's by default: refused, the device logs "CPU wake latency not held" and runs without it, so provisioning grants the device (a udev rule) or disables the idle states (dstack #1).
