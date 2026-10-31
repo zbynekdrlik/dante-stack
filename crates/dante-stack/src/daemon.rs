@@ -628,7 +628,11 @@ pub async fn serve<R: Registry + Browse>(
     let ip = net.ip;
     let changed = Arc::new(Notify::new());
     let n = announce_device(&shared, announcer, ip)?;
-    info!(records = n, "mDNS records announced");
+    info!(
+        records = n,
+        queue_waits = announcer.waited(),
+        "mDNS records announced"
+    );
     let (identity, network) = {
         let device = shared.lock().unwrap_or_else(PoisonError::into_inner);
         (Identity::new(&device.cfg, net), network_of(&device.cfg))
@@ -678,7 +682,11 @@ pub async fn serve<R: Registry + Browse>(
             () = changed.notified() => {
                 own_stale = true;
                 match announce_device(&shared, announcer, ip) {
-                    Ok(n) => info!(records = n, "mDNS records announced again after a rename"),
+                    Ok(n) => info!(
+                        records = n,
+                        queue_waits = announcer.waited(),
+                        "mDNS records announced again after a rename"
+                    ),
                     Err(e) => break Err(e.into()),
                 }
             }

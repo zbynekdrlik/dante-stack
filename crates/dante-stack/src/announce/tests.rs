@@ -251,11 +251,28 @@ struct FakeRegistry {
     calls: RefCell<Vec<Call>>,
     /// A fullname whose registration fails.
     refuse: RefCell<Option<String>>,
+    /// Calls still to answer `Again`, as mdns-sd does while its command
+    /// queue (100) is full.
+    busy: std::cell::Cell<u32>,
+}
+
+impl FakeRegistry {
+    /// `Again` for this call while the queue is "full".
+    fn again(&self) -> Result<(), mdns_sd::Error> {
+        match self.busy.get() {
+            0 => Ok(()),
+            n => {
+                self.busy.set(n - 1);
+                Err(mdns_sd::Error::Again)
+            }
+        }
+    }
 }
 
 impl Registry for FakeRegistry {
     fn register(&self, info: ServiceInfo) -> Result<(), mdns_sd::Error> {
         let name = info.get_fullname().to_string();
+        self.again()?;
         if self.refuse.borrow().as_deref() == Some(name.as_str()) {
             return Err(mdns_sd::Error::Msg("refused by the test".into()));
         }
@@ -264,6 +281,7 @@ impl Registry for FakeRegistry {
     }
 
     fn unregister(&self, fullname: &str) -> Result<(), mdns_sd::Error> {
+        self.again()?;
         self.calls
             .borrow_mut()
             .push(Call::Unregister(fullname.to_string()));
@@ -379,4 +397,91 @@ fn a_failed_announcement_is_tried_again_and_a_bad_record_sends_nothing() {
 fn hex_is_lower_case_two_digits_a_byte() {
     assert_eq!(hex(&[0x00, 0x0a, 0xff, 0x10]), "000aff10");
     assert_eq!(hex(&[]), "");
+}
+
+#[test]
+fn a_full_daemon_queue_delays_the_announcement_and_never_ends_it() {
+    // iemmixer, 31.10.2026: "announcing the device: mDNS record 100
+    // (_netaudio-chan._udp.local.): try again" ended the device at start.
+    let cfg = config();
+    let mut state = DeviceState::from_config(&cfg);
+    let mut a = Announcer::new(FakeRegistry::default());
+    a.registry().busy.set(5);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(take(&a).len(), 18, "every record registered once");
+    // A rename registers a record, its reset withdraws it: the same.
+    state.tx[0] = "Click".into();
+    a.registry().busy.set(5);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(take(&a), vec![Call::Register(chan("Click"))]);
+    state.tx[0] = cfg.tx[0].clone();
+    a.registry().busy.set(5);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(
+        take(&a),
+        vec![Call::Unregister(chan("Click").to_lowercase())]
+    );
+}
+
+#[test]
+fn a_queue_that_stays_full_ends_the_announcement_after_its_tries() {
+    let cfg = config();
+    let state = DeviceState::from_config(&cfg);
+    let mut a = Announcer::new(FakeRegistry::default()).with_again_tries(3);
+    a.registry().busy.set(1000);
+    let err = a.announce(&records(&state, &cfg, HOST, IP)).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AnnounceError::Record {
+                index: 0,
+                source: mdns_sd::Error::Again,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    // The first call and 3 more, then the error.
+    assert_eq!(a.registry().busy.get(), 1000 - 4);
+    assert_eq!(a.waited(), 3);
+    assert!(take(&a).is_empty());
+}
+
+#[test]
+fn every_wait_for_a_full_queue_is_counted() {
+    let cfg = config();
+    let mut state = DeviceState::from_config(&cfg);
+    let mut a = Announcer::new(FakeRegistry::default());
+    assert_eq!(a.waited(), 0);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(a.waited(), 0, "a free queue waits for nothing");
+    state.tx[0] = "Click".into();
+    a.registry().busy.set(3);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(a.waited(), 3, "registration");
+    state.tx[0] = cfg.tx[0].clone();
+    a.registry().busy.set(4);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(a.waited(), 7, "withdrawal");
+}
+
+#[test]
+fn a_real_daemon_takes_more_records_than_its_queue_holds() {
+    // mdns-sd queues 100 commands; iemmixer's device has about 200 records.
+    let daemon = ServiceDaemon::new().unwrap();
+    let recs: Vec<ServiceRecord> = (0..300)
+        .map(|i| ServiceRecord {
+            service: CHAN_SERVICE,
+            instance: format!("{i}@test-device"),
+            host: HOST.to_string(),
+            ip: IP,
+            port: 4455,
+            txt: vec![format!("id={i}")],
+        })
+        .collect();
+    let mut a = Announcer::new(daemon);
+    let announced = a.announce(&recs);
+    eprintln!("waits for the full queue: {}", a.waited());
+    let _status = a.registry().shutdown();
+    announced.unwrap();
 }
