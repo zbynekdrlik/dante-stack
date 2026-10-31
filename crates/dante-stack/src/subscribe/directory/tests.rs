@@ -1004,3 +1004,35 @@ fn the_stop_is_set_under_the_book_s_lock() {
     asking.join().unwrap();
     assert!(shared.stop.load(Ordering::Relaxed));
 }
+
+/// A device's directory of `n` channels at 96 kHz, 24 bits, `01` up.
+fn device_of(n: u16) -> Directory {
+    let listed = (1..=n)
+        .map(|id| TxChannel {
+            id,
+            rate: 96_000,
+            bits: 24,
+            default: format!("{id:02}"),
+            name: None,
+        })
+        .collect();
+    Directory::new(listed, &[])
+}
+
+#[test]
+fn an_arc_resolved_device_is_asked_for_no_more_slots_than_its_channels() {
+    // iemmixer, 31.10.2026: a 2-channel wireless mic refused our flow of 4
+    // slots with 0x0311 (capture on dstack #1). Dante's own records say
+    // nchan = min(the most a flow carries, the TX channels) (announce.rs
+    // does the same for ours), so a 2-channel device gets 2 slots.
+    for (n, want) in [(1, 1), (2, 2), (3, 3), (4, 4), (16, 4)] {
+        let mut book = peer_book_with(Timing::default());
+        assert_eq!(book.lookup("peer-device", "01", SETTLE_NS), None);
+        let job = book.next(SETTLE_NS).unwrap();
+        book.finished(&job, done(device_of(n), 4), SETTLE_NS);
+        let a = book
+            .lookup("peer-device", "01", SETTLE_NS)
+            .expect("listed after the read");
+        assert_eq!(a.nchan, want, "{n} channels");
+    }
+}

@@ -44,7 +44,8 @@
 //!
 //! **What an ARC-resolved channel offers** ([`offer`]): flow control at the
 //! `_netaudio-dbc` record's address and port; the id, rate and bits its
-//! 0x2000 page gives; [`NCHAN`] channel slots; [`Timing::fpp`] frames per
+//! 0x2000 page gives; [`NCHAN`] channel slots, or the device's TX channels
+//! when it has fewer ([`offer_in`]); [`Timing::fpp`] frames per
 //! packet (`fpp_min = fpp_max`: the device config's `arc_rx_fpp`, [`FPP`]
 //! when it is left out; a packet leaves the transmitter only after its last
 //! frame, so fewer frames cut our RX lateness, #72 phase F); `dbcp1` 0x1102
@@ -153,6 +154,19 @@ pub fn offer(ch: &TxChannel, dbc: SocketAddrV4, fpp: u16) -> Advertised {
         fpp_min: fpp,
         fpp_max: fpp,
         latency_ns: 0,
+    }
+}
+
+/// What `ch` of the device whose directory is `dir` offers: [`offer`], with
+/// no more slots than the device has TX channels, as Dante's own records
+/// count them (`min(the most a flow carries, the TX channels)`). A
+/// 2-channel wireless mic refused a flow of 4 slots with 0x0311 (iemmixer,
+/// 31.10.2026, dstack #1).
+pub fn offer_in(dir: &Directory, ch: &TxChannel, dbc: SocketAddrV4, fpp: u16) -> Advertised {
+    let channels = u16::try_from(dir.channels().len()).unwrap_or(u16::MAX);
+    Advertised {
+        nchan: NCHAN.min(channels),
+        ..offer(ch, dbc, fpp)
     }
 }
 
@@ -389,7 +403,7 @@ impl Book {
         let want = match &reads.directory {
             Some((dir, at)) if now.saturating_sub(*at) < self.timing.max_age_ns => {
                 match dir.find(channel) {
-                    Some(ch) => return Some(offer(ch, dbc, self.timing.fpp)),
+                    Some(ch) => return Some(offer_in(dir, ch, dbc, self.timing.fpp)),
                     None => {
                         self.counts.not_listed += 1;
                         Want::NotListed
