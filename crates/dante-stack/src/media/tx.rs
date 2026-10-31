@@ -114,6 +114,31 @@ pub const KEEPALIVE_DRAIN: usize = 64;
 /// holds a send (gen3 at 250 µs, 31.10.2026: 168 k packets/s received at
 /// one priority delayed sends by up to 247 µs).
 pub const TX_PRIORITY: i32 = 47;
+/// The DSCP of our audio packets: Expedited Forwarding, as Dante hardware
+/// marks its audio (PTP is CS7, 56; dantesync's). A switch with QoS ranks
+/// them above bulk traffic.
+pub const DSCP_EF: u8 = 46;
+/// The TX flow sockets' `SO_PRIORITY` on Linux: pfifo_fast's first band,
+/// the highest a socket takes without `CAP_NET_ADMIN`.
+pub const SOCKET_PRIORITY: u32 = 6;
+
+/// Marks a TX flow socket: DSCP EF and `SO_PRIORITY` [`SOCKET_PRIORITY`]
+/// on Linux. Windows sets a packet's DSCP only through a QoS policy
+/// (`IP_TOS` from a program is ignored by default), so there it is the
+/// box's policy, not ours.
+#[cfg(target_os = "linux")]
+fn mark(s: &UdpSocket) -> io::Result<()> {
+    let r = socket2::SockRef::from(s);
+    r.set_tos_v4(u32::from(DSCP_EF) << 2)?;
+    r.set_priority(SOCKET_PRIORITY)
+}
+
+/// Windows: nothing (see the Linux one).
+#[cfg(not(target_os = "linux"))]
+fn mark(_: &UdpSocket) -> io::Result<()> {
+    Ok(())
+}
+
 /// The tries of a seqlocked read before it keeps the last copy.
 const READ_TRIES: usize = 16;
 
@@ -588,6 +613,7 @@ impl TxShared {
                 let s = UdpSocket::bind(SocketAddrV4::new(ip, 0))?;
                 s.set_nonblocking(true)?;
                 crate::winsock::no_connreset(&s)?;
+                mark(&s)?;
                 Ok(s)
             })
             .collect::<io::Result<Box<[UdpSocket]>>>()?;

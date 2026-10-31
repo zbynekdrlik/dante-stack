@@ -1489,3 +1489,19 @@ fn the_tx_thread_preempts_the_rx_thread_and_both_stay_below_dantesync() {
     assert!(tx < DANTESYNC_PRIORITY, "TX {tx} below dantesync");
     assert!(rx > engine, "RX {rx} above the engine pump {engine}");
 }
+
+/// Catalog: gen3 on the N100 box (31.10.2026). Dante hardware marks its
+/// audio DSCP EF; ours went out unmarked, behind everything a switch with
+/// QoS ranks higher, and in the kernel's default band behind bulk data.
+/// Every TX flow socket marks EF, and on Linux takes priority 6
+/// (pfifo_fast's first band).
+#[cfg(target_os = "linux")]
+#[test]
+fn every_tx_flow_socket_marks_its_packets_ef() {
+    let shared = TxShared::new(cfg(), Ipv4Addr::LOCALHOST, Vec::new().into(), 1, &[]).unwrap();
+    for s in shared.sockets.iter() {
+        let r = socket2::SockRef::from(s);
+        assert_eq!(r.tos_v4().unwrap(), u32::from(DSCP_EF) << 2);
+        assert_eq!(r.priority().unwrap(), SOCKET_PRIORITY);
+    }
+}

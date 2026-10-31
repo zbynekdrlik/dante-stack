@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.14 (2026-10-31)
+
+- Fix (Linux): every TX flow socket marks its packets DSCP EF (46), as Dante hardware marks its audio, and takes `SO_PRIORITY` 6 (pfifo_fast's first band). Windows ignores a program's `IP_TOS`; there DSCP comes from a QoS policy on the box. Before, our audio went out unmarked: below marked traffic on a switch with QoS, and in the kernel's default band behind bulk data (gen3 box, dstack #1).
+
 ## 0.4.13 (2026-10-31)
 
 - Linux: at start the device reads the Dante NIC's root qdisc (`tc -j qdisc show`) and warns unless it is `noqueue` or lockless `pfifo_fast`. On the gen3 box, fq_codel held our packets behind a preempted low-priority sender: the IEM card read peak 812 µs and late packets at 250 µs while our counters were clean; with `noqueue`, peak 229 µs and none late (iemmixer, dstack #1).
