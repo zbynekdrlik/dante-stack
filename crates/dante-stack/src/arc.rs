@@ -27,6 +27,7 @@
 //! | 0x2013 | TX rename |
 //! | 0x2200 | TX flows, [`FLOW_PAGE`] slots a page (inferno's `query_tx_flows`) |
 //! | 0x2201, 0x2202 | create, delete a multicast TX flow: no multicast, refused (inferno's answer when it creates or deletes none) |
+//! | 0x2204 | status [`STATUS_2320`], no body (the IEM card's answer, captured) |
 //! | 0x2320 | status [`STATUS_2320`], no body (inferno's "???") |
 //! | 0x3000 | RX channels with their names, subscriptions and statuses, paged |
 //! | 0x3001 | RX rename |
@@ -130,6 +131,10 @@ pub mod op {
     /// Asked by Dante Controller; inferno answers status
     /// [`STATUS_2320`](super::STATUS_2320) and no body.
     pub const OP_2320: u16 = 0x2320;
+    /// Asked by Dante Controller (a page request); the IEM card answers
+    /// status [`STATUS_2320`](super::STATUS_2320) and no body (captured
+    /// 30.10.2026, dstack #1).
+    pub const OP_2204: u16 = 0x2204;
     pub const RX_CHANNELS: u16 = 0x3000;
     pub const RX_RENAME: u16 = 0x3001;
     pub const RX_SUBSCRIBE: u16 = 0x3010;
@@ -355,7 +360,7 @@ pub fn handle(
         op::RX_FLOWS => rx_flows(&h, body, cfg, live.rx),
         op::TX_MULTICAST_CREATE => no_multicast(&h, body, 2),
         op::TX_MULTICAST_DELETE => no_multicast(&h, body, 4),
-        op::OP_2320 => ArcOutcome::Reply(reply(&h, STATUS_2320, &[])),
+        op::OP_2320 | op::OP_2204 => ArcOutcome::Reply(reply(&h, STATUS_2320, &[])),
         op::RX_SUBSCRIBE => subscribe(&h, body, state, cfg),
         op::RX_UNSUBSCRIBE => unsubscribe(&h, body, state, cfg),
         op::CLOCK => ok(&CLOCK_REPLY),
