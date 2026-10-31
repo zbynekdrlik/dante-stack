@@ -309,3 +309,40 @@ fn a_lookup_marks_the_resolver_asked_and_a_failed_start_is_tried_once() {
     assert!(i.start(Ipv4Addr::new(192, 0, 2, 1)).is_err());
     assert!(i.tried() && !i.started());
 }
+
+#[test]
+fn a_record_read_by_the_thread_ages_on_the_resolver_s_clock() {
+    let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+    responder
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let to = match responder.local_addr().unwrap() {
+        std::net::SocketAddr::V4(a) => a,
+        other => panic!("{other}"),
+    };
+    let t = Arc::new(std::sync::atomic::AtomicU64::new(5 * S));
+    let mut i = Instances::with_clock(Arc::clone(&t));
+    i.lookup(DEVICE, CHANNEL);
+    i.start_to(Ipv4Addr::LOCALHOST, to).unwrap();
+    let mut buf = [0u8; 1500];
+    let (_, from) = responder.recv_from(&mut buf).expect("a query");
+    responder.send_to(&answer(true), from).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while i.lookup(DEVICE, CHANNEL).is_none() {
+        assert!(Instant::now() < deadline, "never resolved");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    t.store(5 * S + MAX_AGE_NS - 1, Ordering::Relaxed);
+    assert!(i.lookup(DEVICE, CHANNEL).is_some(), "fresh");
+    t.store(5 * S + MAX_AGE_NS + S, Ordering::Relaxed);
+    assert!(i.lookup(DEVICE, CHANNEL).is_none(), "aged on the clock");
+}
+
+#[test]
+fn dropping_the_resolver_stops_its_thread() {
+    let i = Instances::new();
+    let stop = i.stop_flag();
+    assert!(!stop.load(Ordering::Relaxed));
+    drop(i);
+    assert!(stop.load(Ordering::Relaxed));
+}

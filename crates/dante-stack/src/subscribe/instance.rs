@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use simple_dns::rdata::RData;
 use simple_dns::{CLASS, Name, Packet, QCLASS, QTYPE, Question, TYPE};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use super::resolve::{Advertised, Resolver, instance, parse};
 
@@ -233,6 +233,7 @@ impl Table {
                 SocketAddrV4::new(ip, *port),
             ) {
                 Ok(a) => {
+                    info!("a channel record read by a direct instance query");
                     e.advert = Some((a, now));
                     e.found = Found::default();
                     completed += 1;
@@ -248,6 +249,24 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The resolver's and its thread's time, ns: since its start, or a test's.
+#[derive(Debug, Clone)]
+enum Clock {
+    Real(Instant),
+    #[cfg(test)]
+    Fake(Arc<std::sync::atomic::AtomicU64>),
+}
+
+impl Clock {
+    fn now(&self) -> u64 {
+        match self {
+            Clock::Real(base) => u64::try_from(base.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            #[cfg(test)]
+            Clock::Fake(t) => t.load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// The direct instance queries of a device (see the module).
 #[derive(Debug)]
 pub struct Instances {
@@ -257,7 +276,7 @@ pub struct Instances {
     /// Its start was tried (once, whatever came of it).
     tried: bool,
     thread: Option<JoinHandle<()>>,
-    base: Option<Instant>,
+    clock: Clock,
 }
 
 impl Instances {
@@ -268,8 +287,16 @@ impl Instances {
             asked: AtomicBool::new(false),
             tried: false,
             thread: None,
-            base: Some(Instant::now()),
+            clock: Clock::Real(Instant::now()),
         }
+    }
+
+    /// A resolver on a test's clock (ns).
+    #[cfg(test)]
+    fn with_clock(t: Arc<std::sync::atomic::AtomicU64>) -> Self {
+        let mut i = Self::new();
+        i.clock = Clock::Fake(t);
+        i
     }
 
     /// A lookup reached it (the thread is then due).
@@ -285,12 +312,6 @@ impl Instances {
     /// records and ARC still resolve).
     pub fn tried(&self) -> bool {
         self.tried
-    }
-
-    fn now(&self) -> u64 {
-        self.base.map_or(0, |b| {
-            u64::try_from(b.elapsed().as_nanos()).unwrap_or(u64::MAX)
-        })
     }
 
     /// Starts the thread on a socket bound to our address `ip`, once:
@@ -312,11 +333,11 @@ impl Instances {
             socket2::SockRef::from(&sock).set_multicast_if_v4(&ip)?;
         }
         let (table, stop) = (Arc::clone(&self.table), Arc::clone(&self.stop));
-        let base = self.base.unwrap_or_else(Instant::now);
+        let clock = self.clock.clone();
         self.thread = Some(
             std::thread::Builder::new()
                 .name("dante-mdns-instance".to_string())
-                .spawn(move || run(&sock, to, &table, &stop, base))?,
+                .spawn(move || run(&sock, to, &table, &stop, &clock))?,
         );
         Ok(true)
     }
@@ -325,6 +346,14 @@ impl Instances {
 impl Default for Instances {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl Instances {
+    /// The stop flag its thread reads.
+    fn stop_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.stop)
     }
 }
 
@@ -337,49 +366,33 @@ impl Drop for Instances {
 impl Resolver for Instances {
     fn lookup(&self, tx_device: &str, tx_channel: &str) -> Option<Advertised> {
         self.asked.store(true, Ordering::Relaxed);
-        let now = self.now();
+        let now = self.clock.now();
         lock(&self.table).lookup(tx_device, tx_channel, now)
     }
 }
 
 /// The thread: the due queries every [`ROUND`], the answers in between.
-fn run(sock: &UdpSocket, to: SocketAddrV4, table: &Mutex<Table>, stop: &AtomicBool, base: Instant) {
-    let now = || u64::try_from(base.elapsed().as_nanos()).unwrap_or(u64::MAX);
+fn run(sock: &UdpSocket, to: SocketAddrV4, table: &Mutex<Table>, stop: &AtomicBool, clock: &Clock) {
     let mut id: u16 = 0;
     let mut buf = vec![0u8; 9000];
-    let (mut sent, mut answered) = (0u64, 0u64);
     while !stop.load(Ordering::Relaxed) {
-        let asks = lock(table).due(now());
+        let asks = lock(table).due(clock.now());
         for ask in asks {
             id = id.wrapping_add(1);
             let bytes = match &ask {
                 Ask::Instance(name) => query(id, name),
                 Ask::Host(_, host) => host_query(id, host),
             };
-            if let Some(bytes) = bytes {
-                match sock.send_to(&bytes, to) {
-                    Ok(_) => sent += 1,
-                    Err(e) => debug!(%e, "instance query not sent"),
-                }
+            if let Some(Err(e)) = bytes.map(|b| sock.send_to(&b, to)) {
+                debug!(%e, "instance query not sent");
             }
         }
         match sock.recv_from(&mut buf) {
             Ok((n, _)) => {
-                let done = lock(table).answer(&buf[..n], now());
-                if done > 0 {
-                    answered += done as u64;
-                    info!(
-                        sent,
-                        answered, "a channel record read by a direct instance query"
-                    );
-                }
+                lock(table).answer(&buf[..n], clock.now());
             }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
-            Err(e) => debug!(%e, "instance answer not read"),
+            // Mostly the round's timeout.
+            Err(e) => trace!(kind = ?e.kind(), "no instance answer this round"),
         }
     }
 }
