@@ -648,7 +648,7 @@ async fn serve_device(
     );
     #[cfg(unix)]
     let ctl_server = ctl::serve_control(s.listener, Arc::clone(&s.media));
-    // No control socket on Windows (dasio's tray reads the shared memory).
+    // No control socket on Windows (dante-asio's tray reads the shared memory).
     #[cfg(windows)]
     let ctl_server = std::future::pending::<std::io::Result<()>>();
     daemon::serve(
