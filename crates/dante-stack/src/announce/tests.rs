@@ -251,11 +251,28 @@ struct FakeRegistry {
     calls: RefCell<Vec<Call>>,
     /// A fullname whose registration fails.
     refuse: RefCell<Option<String>>,
+    /// Calls still to answer `Again`, as mdns-sd does while its command
+    /// queue (100) is full.
+    busy: std::cell::Cell<u32>,
+}
+
+impl FakeRegistry {
+    /// `Again` for this call while the queue is "full".
+    fn again(&self) -> Result<(), mdns_sd::Error> {
+        match self.busy.get() {
+            0 => Ok(()),
+            n => {
+                self.busy.set(n - 1);
+                Err(mdns_sd::Error::Again)
+            }
+        }
+    }
 }
 
 impl Registry for FakeRegistry {
     fn register(&self, info: ServiceInfo) -> Result<(), mdns_sd::Error> {
         let name = info.get_fullname().to_string();
+        self.again()?;
         if self.refuse.borrow().as_deref() == Some(name.as_str()) {
             return Err(mdns_sd::Error::Msg("refused by the test".into()));
         }
@@ -264,6 +281,7 @@ impl Registry for FakeRegistry {
     }
 
     fn unregister(&self, fullname: &str) -> Result<(), mdns_sd::Error> {
+        self.again()?;
         self.calls
             .borrow_mut()
             .push(Call::Unregister(fullname.to_string()));
@@ -379,4 +397,28 @@ fn a_failed_announcement_is_tried_again_and_a_bad_record_sends_nothing() {
 fn hex_is_lower_case_two_digits_a_byte() {
     assert_eq!(hex(&[0x00, 0x0a, 0xff, 0x10]), "000aff10");
     assert_eq!(hex(&[]), "");
+}
+
+#[test]
+fn a_full_daemon_queue_delays_the_announcement_and_never_ends_it() {
+    // iemmixer, 31.10.2026: "announcing the device: mDNS record 100
+    // (_netaudio-chan._udp.local.): try again" ended the device at start.
+    let cfg = config();
+    let mut state = DeviceState::from_config(&cfg);
+    let mut a = Announcer::new(FakeRegistry::default());
+    a.registry().busy.set(5);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(take(&a).len(), 18, "every record registered once");
+    // A rename registers a record, its reset withdraws it: the same.
+    state.tx[0] = "Click".into();
+    a.registry().busy.set(5);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(take(&a), vec![Call::Register(chan("Click"))]);
+    state.tx[0] = cfg.tx[0].clone();
+    a.registry().busy.set(5);
+    a.announce(&records(&state, &cfg, HOST, IP)).unwrap();
+    assert_eq!(
+        take(&a),
+        vec![Call::Unregister(chan("Click").to_lowercase())]
+    );
 }
