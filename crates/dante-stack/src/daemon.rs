@@ -655,7 +655,7 @@ pub async fn serve<R: Registry + Browse>(
         Arc::clone(&rx_changes),
         Arc::clone(&requests),
     );
-    let cmc = cmc::serve_cmc(sockets.cmc, ip, Arc::clone(&requests));
+    let cmc = cmc::serve_cmc(sockets.cmc, ip, identity.process, Arc::clone(&requests));
     let info = info::serve_info(
         sockets.info,
         Multicaster::new(identity),

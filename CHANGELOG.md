@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.5 (2026-10-31)
+
+- New, the first step of the per-PC manager (owner, 31.10.2026: several of our devices on a PC's one address, no extra IPs; dstack #1): per-device ports and process id in the device config. `arc_port`, `cmc_port` and `flows_port` (defaults 4440, 8800 and 4455) are bound on the device's address and advertised in its records (the ARC and CMC SRV, the channel records). `process_id` (default 0) goes into the device id (`cmc::device_id(ip, process)`, the CMC advertisement, the info packets), the mDNS `process`, and our TX and RX flow names. On dev1 (31.10), Dante Controller read a device with ARC on 4441 and CMC on 8801 in full, so it uses the SRV ports. Consumer-visible: `cmc::device_id`, `cmc::handle_cmc` and `cmc::serve_cmc` take the process id, and `info::Identity` has `process`. The info port 8700 stays one per address; the shared responder for several devices is next.
+
 ## 0.4.4 (2026-10-31)
 
 - Fix (iemmixer, dstack #1): on the box (29 subscriptions) the mic's record still never won. The query thread sent its due queries in one burst (one per subscribed name), and the wireless mic receiver answers none of a burst; at every re-query the burst came again, because the Yamaha card's 18 channels never answer. Reproduced from dev1 with the box's 29 names (the mic unresolved, ARC at 8 s). Queries are now spaced 20 ms apart (`instance::PACE`), with answers read in between: from dev1 the same 29 names give the mic's record in 0.5 s (1 ms, fpp 32). The stage rack answers direct queries too (250 µs, fpp 2..4).

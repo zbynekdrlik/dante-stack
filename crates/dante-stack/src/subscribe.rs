@@ -69,7 +69,6 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use tracing::{info, warn};
 
 use crate::clock::to_samples;
-use crate::cmc::PROCESS_ID;
 use crate::device::{DeviceConfig, Subscription};
 use crate::flows::client::ClientError;
 use crate::flows::control::{FlowRequest, Handle, status};
@@ -271,6 +270,8 @@ pub struct Manager {
     latency_ns: u64,
     /// The pump's block, samples (the device config's).
     block: u64,
+    /// Our process id (the config's), in our flows' names.
+    process: u16,
     /// The config's `playout_override`, by lower-case device name.
     playout_override: BTreeMap<String, u32>,
     subs: Vec<Option<Subscription>>,
@@ -314,6 +315,7 @@ impl Manager {
             rate: cfg.sample_rate,
             latency_ns: cfg.latency_ns,
             block: cfg.block,
+            process: cfg.process_id,
             playout_override: cfg
                 .playout_override
                 .iter()
@@ -823,7 +825,7 @@ impl Manager {
             to: first.control,
             req: FlowRequest {
                 rx_host: self.host.clone(),
-                rx_flow_name: format!("{}_{PROCESS_ID}", slot + 1),
+                rx_flow_name: format!("{}_{}", slot + 1, self.process),
                 sample_rate: self.rate,
                 bits: first.bits,
                 channels: ids,

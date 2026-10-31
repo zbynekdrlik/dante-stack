@@ -1270,3 +1270,21 @@ fn the_timing_profile_is_read_low_latency_by_default() {
         .is_err()
     );
 }
+
+#[test]
+fn the_ports_and_the_process_id_are_read_the_defaults_when_left_out() {
+    let cfg = DeviceConfig::from_toml(TEST_DEVICE).unwrap();
+    assert_eq!(
+        (cfg.arc_port, cfg.cmc_port, cfg.flows_port, cfg.process_id),
+        (4440, 8800, 4455, 0)
+    );
+    let cfg = DeviceConfig::from_toml(&config_with(
+        "latency_ns =",
+        "latency_ns = 1000000\narc_port = 4441\ncmc_port = 8801\nflows_port = 4456\nprocess_id = 2",
+    ))
+    .unwrap();
+    assert_eq!(
+        (cfg.arc_port, cfg.cmc_port, cfg.flows_port, cfg.process_id),
+        (4441, 8801, 4456, 2)
+    );
+}

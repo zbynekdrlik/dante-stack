@@ -1353,3 +1353,14 @@ fn a_changed_record_gives_up_its_own_flow_whatever_other_flows_carry() {
     assert!(m.flow(peer_flow.slot).is_some(), "the other flow stays");
     assert!(m.rx_route(1).is_some());
 }
+
+#[test]
+fn our_flow_names_carry_our_process_id() {
+    let mut cfg = cfg();
+    cfg.process_id = 3;
+    let net = peer_network();
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    m.set(0, Some(sub("TX 3", "peer-device")));
+    let r = requests(&m.tick(0, &NONE, &net));
+    assert_eq!(r[0].2.rx_flow_name, "1_3");
+}

@@ -26,8 +26,8 @@ use std::time::Duration;
 
 use mdns_sd::{ServiceDaemon, ServiceInfo, TxtProperty};
 
-use crate::arc::{self, MAX_CHANNELS_IN_FLOW, PCM_TYPE};
-use crate::cmc::{self, PROCESS_ID, device_id};
+use crate::arc::{MAX_CHANNELS_IN_FLOW, PCM_TYPE};
+use crate::cmc::device_id;
 use crate::device::{DeviceConfig, DeviceState};
 
 pub const ARC_SERVICE: &str = "_netaudio-arc._udp.local.";
@@ -109,8 +109,8 @@ pub fn records(
         model.clone(),
     ];
     let cmc_txt = vec![
-        format!("id={}", hex(&device_id(ip))),
-        format!("process={PROCESS_ID}"),
+        format!("id={}", hex(&device_id(ip, cfg.process_id))),
+        format!("process={}", cfg.process_id),
         "cmcp_vers=1.2.0".to_string(),
         "cmcp_min=1.0.0".to_string(),
         "server_vers=4.0.2".to_string(),
@@ -123,8 +123,8 @@ pub fn records(
         String::new(),
     ];
     let mut out = vec![
-        record(ARC_SERVICE, state.name.clone(), arc::PORT, arc_txt),
-        record(CMC_SERVICE, state.name.clone(), cmc::PORT, cmc_txt),
+        record(ARC_SERVICE, state.name.clone(), cfg.arc_port, arc_txt),
+        record(CMC_SERVICE, state.name.clone(), cfg.cmc_port, cmc_txt),
     ];
     let nchan = MAX_CHANNELS_IN_FLOW.min(u16::try_from(cfg.tx.len()).unwrap_or(u16::MAX));
     for (i, (default, now)) in cfg.tx.iter().zip(&state.tx).enumerate() {
@@ -148,11 +148,16 @@ pub fn records(
             txt
         };
         let named = |channel: &str| format!("{channel}@{}", state.name);
-        out.push(record(CHAN_SERVICE, named(default), FLOWS_PORT, txt(true)));
+        out.push(record(
+            CHAN_SERVICE,
+            named(default),
+            cfg.flows_port,
+            txt(true),
+        ));
         // mDNS names compare without case: a name that differs only so is
         // the default record's own name.
         if !now.eq_ignore_ascii_case(default) {
-            out.push(record(CHAN_SERVICE, named(now), FLOWS_PORT, txt(false)));
+            out.push(record(CHAN_SERVICE, named(now), cfg.flows_port, txt(false)));
         }
     }
     out
