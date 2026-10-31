@@ -687,6 +687,16 @@ impl Manager {
             }
         }
         ids.resize(n, None);
+        let latency_ns = first.latency_ns.max(self.latency_ns);
+        let latency = to_samples(latency_ns, self.rate);
+        if fpp_misses(fpp, latency) {
+            warn!(
+                fpp,
+                latency_samples = latency,
+                "RX flow: its frames per packet reach the latency, so every packet is late; \
+                 raise the device's latency_ns above fpp plus the network's lateness"
+            );
+        }
         self.generation = self.generation.wrapping_add(1);
         let id = FlowId {
             slot,
@@ -698,7 +708,7 @@ impl Manager {
             slots: ids.clone(),
             bits: first.bits,
             fpp,
-            latency_ns: first.latency_ns.max(self.latency_ns),
+            latency_ns,
             since: now,
             handle: None,
             heard: None,
@@ -806,6 +816,14 @@ impl Manager {
                     .is_some_and(|t| now < t.saturating_add(RETRY_NS))
         });
     }
+}
+
+/// A flow of `fpp` frames per packet played out `latency` samples after its
+/// stamps misses every packet's first frames: a packet leaves its
+/// transmitter only after its last frame (iemmixer, 31.10.2026: fpp 32 at
+/// 24 samples, every packet late).
+pub fn fpp_misses(fpp: u16, latency: u64) -> bool {
+    u64::from(fpp) >= latency
 }
 
 /// The frames per packet to ask `a`'s transmitter for in a flow of `n`

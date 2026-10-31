@@ -1152,3 +1152,14 @@ fn an_fpp_step_leaves_other_transmitters_channels_alone() {
         "a step is no failure: the mic's channel waits for its next request"
     );
 }
+
+#[test]
+fn a_flow_whose_fpp_reaches_the_latency_misses_its_packets() {
+    assert!(fpp_misses(32, 24));
+    assert!(
+        fpp_misses(32, 32),
+        "the first frame is fpp samples old already"
+    );
+    assert!(!fpp_misses(32, 33));
+    assert!(!fpp_misses(4, 96));
+}
