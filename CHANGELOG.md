@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2 (2026-10-31)
+
+- New: `arc::control::subscribe(c, rx, tx_channel, tx_device)` and `arc::control::unsubscribe(c, rx)` (dstack #16 step 3, asked by dcontroller). One explicit ARC request each, 0x3010 and 0x3014, byte-exact with netaudio's `add_subscription`/`remove_subscription` (`subscribe_request`, `unsubscribe_request`). A refusal is `ReadError::Refused` with the device's status. A device answers OK also when it changed nothing, so read the channel back with `rx_channels`. Tests: the frames byte for byte, our own server in process, and in `tests/system_clock.rs` our running device subscribed over the network (its RX 2 to its own TX 1), read back, then unsubscribed. The stack itself never calls them: whether a device may be changed is the application's call (the owner's rule).
+
 ## 0.3.1 (2026-10-31)
 
 - New: `arc::control::rx_channels(c)` (dstack #16 step 2, asked by dcontroller). Every RX channel of any device as `RxChannel { channel, label, tx_channel, tx_device, status }`, read from 0x1000's RX count and 0x3000 page by page. `tx_channel`/`tx_device` are `None` when the channel is not subscribed. `status` is the descriptor's 32-bit code (bytes 12 to 15; 0 when not subscribed), and `RxChannel::sub_status()` names it when it is a known code. `labels` keeps its output and reads through the same parser.

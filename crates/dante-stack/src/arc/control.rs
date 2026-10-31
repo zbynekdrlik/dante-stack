@@ -24,7 +24,9 @@
 //!   `02 01 0000 <channel u16> <name offset 24> 000000000000 <name> 00`;
 //!   an empty name resets the label to the channel's default.
 //! - 0x1001, the device's name ([`device_rename_request`]): body `<name>
-//!   00`. Our own server does not answer it (inferno does not).
+//!   00`.
+//! - 0x3010 and 0x3014, a subscription and its end ([`subscribe_request`],
+//!   [`unsubscribe_request`]), as netaudio sends them.
 //!
 //! Nothing here changes anything but what the caller names, on the one
 //! device it talks to; whether a device may be changed at all is the
@@ -90,6 +92,29 @@ pub fn device_rename_request(seq: u16, name: &str) -> Vec<u8> {
     let mut body = name.as_bytes().to_vec();
     body.push(0);
     request(START, seq, SET_NAME, 0, &body)
+}
+
+/// netaudio's subscription of RX channel `rx` to `tx_channel` at
+/// `tx_device`: `02 01 <rx u16> 0034 <device offset u16>`, 34 zero bytes,
+/// then both names NUL-ended (offsets count from the datagram's first byte).
+pub fn subscribe_request(seq: u16, rx: u16, tx_channel: &str, tx_device: &str) -> Vec<u8> {
+    const CHANNEL_AT: u16 = 0x34;
+    let device_at = usize::from(CHANNEL_AT) + tx_channel.len() + 1;
+    let [r0, r1] = rx.to_be_bytes();
+    let [d0, d1] = u16::try_from(device_at).unwrap_or(u16::MAX).to_be_bytes();
+    let mut body = vec![2, 1, r0, r1, 0, 0x34, d0, d1];
+    body.extend([0; 34]);
+    for name in [tx_channel, tx_device] {
+        body.extend_from_slice(name.as_bytes());
+        body.push(0);
+    }
+    request(START, seq, op::RX_SUBSCRIBE, 0, &body)
+}
+
+/// netaudio's unsubscribe of RX channel `rx`: `0001 0000 <rx u16>`.
+pub fn unsubscribe_request(seq: u16, rx: u16) -> Vec<u8> {
+    let [r0, r1] = rx.to_be_bytes();
+    request(START, seq, op::RX_UNSUBSCRIBE, 0, &[0, 1, 0, 0, r0, r1])
 }
 
 /// The request body of `datagram` (built by one of the requests above).
@@ -275,6 +300,33 @@ pub fn rename_device(c: &mut impl Call, name: &str) -> Result<(), ReadError> {
     debug!("ARC: the device's new name sent");
     let req = device_rename_request(0, name);
     ok(c.call(SET_NAME, body_of(&req))?, SET_NAME).map(|_| ())
+}
+
+/// Subscribes the device's RX channel `rx` to `tx_channel` at `tx_device`.
+/// A device answers OK also when it changed nothing (a name its rules
+/// refuse, a channel it does not have): read the channel back with
+/// [`rx_channels`] to see what it made of it.
+pub fn subscribe(
+    c: &mut impl Call,
+    rx: u16,
+    tx_channel: &str,
+    tx_device: &str,
+) -> Result<(), ReadError> {
+    debug!(channel = rx, "ARC: a subscription sent");
+    let req = subscribe_request(0, rx, tx_channel, tx_device);
+    ok(c.call(op::RX_SUBSCRIBE, body_of(&req))?, op::RX_SUBSCRIBE).map(|_| ())
+}
+
+/// Ends the subscription of the device's RX channel `rx` (OK also when it
+/// had none).
+pub fn unsubscribe(c: &mut impl Call, rx: u16) -> Result<(), ReadError> {
+    debug!(channel = rx, "ARC: an unsubscription sent");
+    let req = unsubscribe_request(0, rx);
+    ok(
+        c.call(op::RX_UNSUBSCRIBE, body_of(&req))?,
+        op::RX_UNSUBSCRIBE,
+    )
+    .map(|_| ())
 }
 
 #[cfg(test)]
