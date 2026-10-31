@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 (2026-10-31)
+
+- New: `arc::control::rx_channels(c)` (dstack #16 step 2, asked by dcontroller). Every RX channel of any device as `RxChannel { channel, label, tx_channel, tx_device, status }`, read from 0x1000's RX count and 0x3000 page by page. `tx_channel`/`tx_device` are `None` when the channel is not subscribed. `status` is the descriptor's 32-bit code (bytes 12 to 15; 0 when not subscribed), and `RxChannel::sub_status()` names it when it is a known code. `labels` keeps its output and reads through the same parser.
+- New: `subscribe::SubStatus::from_code(u32)`, the inverse of `SubStatus::code`.
+- Tests: a test that captures logs with a scoped subscriber sometimes captured nothing (seen 1 run in 4 in `device::tests::a_fitted_state_is_logged_once_by_its_counts_only` once more tests ran). Cause: tracing caches a callsite's interest, and a callsite first hit on another thread with no subscriber kept "never". A test-only global subscriber answers "sometimes" for every callsite (`test_log`), so no interest is cached as never (0 failures in 60 runs). No change to the stack's code.
+
 ## 0.3.0 (2026-10-31)
 
 - New: `discover`, device discovery for a controller (dstack #16 step 1, asked by dcontroller). `Discovery::start(ip)` runs an mDNS daemon of its own on the interface with that address only and browses `_netaudio-arc` and `_netaudio-dbc`. `Discovery::devices()` gives the list now, and the returned `Receiver<Change>` gives each `Added`/`Changed`/`Removed` for a live list. `Discovery::stop()` waits at most 3 s. A `Device` is listed once its `_netaudio-arc` record resolves: `name` (its case kept), `arc` (lowest IPv4 and port), `dbc` (when published) and `txt` (the ARC record's TXT strings: `mf`, `model`, `router_info`, ...). The pure table `Devices::apply` is public too. At most 256 devices and 32 TXT strings each. It sends nothing to any device. `Discovery::start_with` takes any `subscribe::resolve::Browse`, for tests. Tests: the table, live discovery through a fake daemon, and in `tests/system_clock.rs` our own running device discovered with its ARC port and TXT, then removed by its goodbyes.

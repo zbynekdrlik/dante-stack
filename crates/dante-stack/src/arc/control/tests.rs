@@ -217,3 +217,79 @@ fn an_empty_or_refused_name_does_not_read() {
         })
     );
 }
+
+#[test]
+fn rx_channels_read_back_labels_and_subscriptions() {
+    use crate::device::Subscription;
+    use crate::subscribe::SubStatus;
+
+    let mut own = Own::new();
+    let sub = Subscription {
+        tx_channel: "Click".to_string(),
+        tx_device: "other-device".to_string(),
+    };
+    assert!(own.state.set_subscription(&own.cfg, 1, Some(sub)));
+    let got = rx_channels(&mut own).unwrap();
+    assert_eq!(got.len(), own.cfg.rx.len());
+    for (i, ch) in got.iter().enumerate() {
+        assert_eq!(ch.channel, i as u16 + 1);
+        assert_eq!(ch.label, own.cfg.rx[i]);
+    }
+    let first = &got[0];
+    assert_eq!(
+        (first.tx_channel.as_deref(), first.tx_device.as_deref()),
+        (None, None)
+    );
+    assert_eq!((first.status, first.sub_status()), (0, None));
+    let second = &got[1];
+    assert_eq!(second.tx_channel.as_deref(), Some("Click"));
+    assert_eq!(second.tx_device.as_deref(), Some("other-device"));
+    // The manager does not run it: the server lists it unresolved.
+    assert_eq!(second.status, SubStatus::Unresolved.code());
+    assert_eq!(second.sub_status(), Some(SubStatus::Unresolved));
+}
+
+#[test]
+fn rx_channels_of_a_device_that_refuses_its_counts_is_a_refusal() {
+    assert_eq!(
+        rx_channels(&mut Fixed(0x0022, Vec::new())),
+        Err(ReadError::Refused {
+            op: op::COUNTS,
+            status: 0x0022
+        })
+    );
+    assert_eq!(
+        rx_channels(&mut Fixed(STATUS_OK, vec![0, 0, 0])),
+        Err(ReadError::Malformed { op: op::COUNTS })
+    );
+}
+
+#[test]
+fn an_rx_page_reads_the_status_s_two_halves_and_names_by_offset() {
+    // [slots 1, count 1], one descriptor, then the names. Offsets count from
+    // the datagram's first byte (the header's 10 bytes before the body).
+    let names = 2 + RX_ITEM;
+    let off = |k: usize| (HEADER_LEN + names + k) as u16;
+    let mut body = vec![1, 1];
+    for f in [3u16, 6, 0, off(0), off(6), off(13), 0x0101, 0x0009, 0, 0] {
+        body.extend_from_slice(&f.to_be_bytes());
+    }
+    body.extend_from_slice(b"Click\0other\0\0Vox L\0");
+    let page = rx_page(STATUS_MORE, &body).expect("a page");
+    assert!(page.more);
+    assert_eq!((page.slots, page.count), (1, 1));
+    assert_eq!(
+        page.items,
+        vec![RxChannel {
+            channel: 3,
+            label: "Vox L".to_string(),
+            tx_channel: Some("Click".to_string()),
+            tx_device: Some("other".to_string()),
+            status: 0x0101_0009,
+        }]
+    );
+    assert_eq!(
+        page.items[0].sub_status(),
+        Some(crate::subscribe::SubStatus::Receiving)
+    );
+}
