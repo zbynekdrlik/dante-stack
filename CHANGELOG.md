@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.9 (2026-10-31)
+
+- Linux: the TX thread holds a PM QoS request (`/dev/cpu_dma_latency` = 0 µs) while it runs, in the low-latency profile. Cause, found with iemmixer on the N100 box at 250 µs: with the deep idle states (C6, C8, C10) on, the IEM card read peak 490 µs and late packets; with them off, peak 240 µs and none in 300 s. The time comes after `send_to`, where no counter of ours sees it. The device is root's by default: refused, the device logs "CPU wake latency not held" and runs without it, so provisioning grants the device (a udev rule) or disables the idle states (dstack #1).
+
 ## 0.4.8 (2026-10-31)
 
 - Fix: the TX counters now measure what a receiver measures. Each TX flow in the status gains `age_max_us` (the oldest a packet was, since its stamp, when its send returned) and `over_latency` (packets older than the advertised latency, which a receiver at that latency counts late). Before, `late_bins` and `late_max_us` measured from the due time (last sample plus margin) with a first edge of 250 µs: gen3 at 250 µs read late_max 204 µs while the FOH console read 770 µs and the PA popped (dstack #1).
