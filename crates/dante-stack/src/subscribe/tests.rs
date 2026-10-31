@@ -1122,3 +1122,33 @@ fn run_with_mic_all(
     }
     asked
 }
+
+#[test]
+fn an_fpp_step_leaves_other_transmitters_channels_alone() {
+    let net = peer_network();
+    net.add("mic", "Vox", mic(1));
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    m.set(1, Some(sub("TX 1", "peer-device")));
+    let actions = m.tick(0, &NONE, &net);
+    let reqs = requests(&actions);
+    assert_eq!(reqs.len(), 2, "{actions:?}");
+    for (flow, to, _) in &reqs {
+        if *to.ip() == PEER_IP {
+            m.answered(*flow, Answer::Granted([0, 0, 0, 1, 0, 1]), 0);
+        }
+    }
+    let before = m.status(1);
+    for (flow, to, _) in &reqs {
+        if *to.ip() == MIC_IP {
+            m.answered(*flow, Answer::Refused(0x0314), 0);
+        }
+    }
+    assert_ne!(before, Some(SubStatus::Unresolved), "granted: routed");
+    assert_eq!(m.status(1), before, "the peer's channel keeps its flow");
+    assert_ne!(
+        m.status(0),
+        Some(SubStatus::TxFail),
+        "a step is no failure: the mic's channel waits for its next request"
+    );
+}

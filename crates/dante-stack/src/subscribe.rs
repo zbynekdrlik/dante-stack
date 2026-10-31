@@ -90,6 +90,9 @@ pub const RETRY_NS: u64 = 9_000_000_000;
 /// The largest fpp a refusal with [`status::FPP_REFUSED`] steps up to:
 /// the most Dante devices advertise ([`crate::announce::FPP_MAX`]).
 pub const FPP_STEP_MAX: u16 = crate::announce::FPP_MAX;
+/// Every fpp step fits one datagram in any flow [`fpp_for`] accepts (at
+/// most [`MAX_CHANNELS`] slots of at most 4 bytes).
+const _: () = assert!(MEDIA_HEADER + MAX_CHANNELS * 4 * FPP_STEP_MAX as usize <= MAX_DATAGRAM);
 /// Transmitters whose fpp step is kept at most.
 pub const MAX_FPP_FLOORS: usize = 64;
 /// The most time between two requests to a transmitter that keeps failing.
@@ -668,16 +671,12 @@ impl Manager {
             }
             return None;
         };
-        // A transmitter that refused a smaller fpp (0x0314) gets its step,
-        // where the flow still fits a datagram.
-        let fpp = match self.fpp_floor.get(first.control.ip()) {
-            Some(&floor)
-                if usize::try_from(first.bits / 8).is_ok_and(|bps| sendable(n, bps, floor)) =>
-            {
-                floor.max(fpp)
-            }
-            _ => fpp,
-        };
+        // A transmitter that refused a smaller fpp (0x0314) gets its step;
+        // a step always fits a datagram (the `const` assertion at FPP_STEP_MAX).
+        let fpp = self
+            .fpp_floor
+            .get(first.control.ip())
+            .map_or(fpp, |&floor| floor.max(fpp));
         let slot = self.free_slot()?;
         // Each TX channel once, in RX order; the first n fill the slots, the
         // rest wait for the next flow.
