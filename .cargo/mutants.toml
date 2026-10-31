@@ -18,6 +18,8 @@ exclude_re = [
   # Host glue only the whole-host tests run (they cannot run per mutant).
   "replace serve_device -> Result",
   "ask_realtime",
+  # Log-only: the qdisc verdict is tested in qdisc::check.
+  "qdisc.rs.*report",
   "replace set_profile -> bool",
   "replace profile -> TimingProfile",
 ]
