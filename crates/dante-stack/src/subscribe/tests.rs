@@ -765,6 +765,7 @@ fn held() -> Option<Flow> {
         latency_ns: 1_000_000,
         device: "held-device".to_string(),
         advertised_ns: 1_000_000,
+        advert: adv(Ipv4Addr::new(10, 0, 0, 99), 1),
         since: 0,
         handle: None,
         heard: None,
@@ -1247,4 +1248,108 @@ fn an_advertised_latency_is_honoured_and_an_override_goes_below_it_marked() {
     let slot = m.rx_route(0).expect("routed").flow;
     assert_eq!(m.rx_plan(slot).latency, 96, "at least our latency");
     assert!(!m.flow(slot).unwrap().below_advertised);
+}
+
+#[test]
+fn a_changed_record_restarts_the_flow_from_it() {
+    // iemmixer, 31.10.2026: the mic's flow went up from its ARC read (fpp
+    // 4, no latency); its channel record (1 ms, fpp 32) came later and
+    // never replaced it.
+    let net = Fake::default();
+    let arc = Advertised {
+        latency_ns: 0,
+        ..mic(1)
+    };
+    net.add("mic", "Vox", arc);
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    let r = requests(&m.tick(0, &NONE, &net));
+    assert_eq!(r[0].2.fpp, 4);
+    let h = handle(0, 5);
+    m.answered(r[0].0, Answer::Granted(h), MS);
+    let mut heard = [1; MAX_FLOWS];
+    assert_eq!(
+        m.tick(100 * MS, &heard, &net),
+        [],
+        "the same record: nothing"
+    );
+    // A lookup that finds nothing for a moment changes nothing.
+    let empty = Fake::default();
+    heard[0] += 1;
+    assert_eq!(m.tick(200 * MS, &heard, &empty), []);
+    assert!(m.rx_route(0).is_some());
+    // The record changes: the flow stops, and is asked for again from it.
+    net.add("mic", "Vox", advertised_mic());
+    heard[0] += 1;
+    let out = m.tick(300 * MS, &heard, &net);
+    assert!(
+        out.contains(&Action::Stop {
+            to: SocketAddrV4::new(MIC_IP, 4455),
+            handle: h
+        }),
+        "{out:?}"
+    );
+    let mut asked = requests(&out);
+    let mut t = 400 * MS;
+    while asked.is_empty() && t < 20 * S {
+        asked = requests(&m.tick(t, &heard, &net));
+        t += 100 * MS;
+    }
+    assert_eq!(asked.len(), 1, "asked again");
+    assert_eq!(asked[0].2.fpp, 32, "from the record");
+    let v = m.flow(asked[0].0.slot).unwrap();
+    assert_eq!(v.advertised_ns, 1_000_000);
+}
+
+#[test]
+fn a_changed_record_gives_up_a_flow_still_asked_for() {
+    let net = Fake::default();
+    net.add(
+        "mic",
+        "Vox",
+        Advertised {
+            latency_ns: 0,
+            ..mic(1)
+        },
+    );
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    let r = requests(&m.tick(0, &NONE, &net));
+    net.add("mic", "Vox", advertised_mic());
+    m.tick(100 * MS, &NONE, &net);
+    assert_eq!(m.flow(r[0].0.slot), None, "given up");
+    // Its grant, late, is stopped at once.
+    assert_eq!(
+        m.answered(r[0].0, Answer::Granted(handle(0, 6)), 200 * MS),
+        [Action::Stop {
+            to: SocketAddrV4::new(MIC_IP, 4455),
+            handle: handle(0, 6)
+        }]
+    );
+}
+
+#[test]
+fn a_changed_record_gives_up_its_own_flow_whatever_other_flows_carry() {
+    let net = peer_network();
+    net.add(
+        "mic",
+        "Vox",
+        Advertised {
+            latency_ns: 0,
+            ..mic(1)
+        },
+    );
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    m.set(1, Some(sub("TX 1", "peer-device")));
+    let r = requests(&m.tick(0, &NONE, &net));
+    assert_eq!(r.len(), 2, "one flow each");
+    let mic_flow = r.iter().find(|(_, to, _)| *to.ip() == MIC_IP).unwrap().0;
+    let peer_flow = r.iter().find(|(_, to, _)| *to.ip() == PEER_IP).unwrap().0;
+    m.answered(peer_flow, Answer::Granted(handle(0, 1)), MS);
+    net.add("mic", "Vox", advertised_mic());
+    m.tick(100 * MS, &[1; MAX_FLOWS], &net);
+    assert_eq!(m.flow(mic_flow.slot), None, "the mic's flow is given up");
+    assert!(m.flow(peer_flow.slot).is_some(), "the other flow stays");
+    assert!(m.rx_route(1).is_some());
 }

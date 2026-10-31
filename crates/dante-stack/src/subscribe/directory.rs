@@ -797,9 +797,14 @@ impl Resolver for Network {
             if self.chan.names_device(tx_device) {
                 None
             } else {
-                self.instances
-                    .lookup(tx_device, tx_channel)
-                    .or_else(|| self.arc.lookup(tx_device, tx_channel))
+                self.instances.lookup(tx_device, tx_channel).or_else(|| {
+                    if self.instances.young(tx_device, tx_channel) {
+                        // Its direct query may still answer: no ARC yet.
+                        None
+                    } else {
+                        self.arc.lookup(tx_device, tx_channel)
+                    }
+                })
             }
         })
     }

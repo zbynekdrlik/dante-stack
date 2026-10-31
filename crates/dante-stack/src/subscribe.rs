@@ -207,6 +207,8 @@ struct Flow {
     /// latency (0 when it advertises none).
     device: String,
     advertised_ns: u64,
+    /// The record it was asked for from (a changed record restarts it).
+    advert: Advertised,
     /// When it was asked for.
     since: u64,
     /// The transmitter's handle; `None` while asked for.
@@ -391,6 +393,7 @@ impl Manager {
                 *route = None;
             }
         }
+        self.reresolve(resolver);
         self.close(now, &mut out);
         let pending = self.resolve(resolver);
         for (ip, waiting) in pending {
@@ -647,6 +650,45 @@ impl Manager {
         }
     }
 
+    /// The routed channels whose record changed (another address, latency,
+    /// fpp or slots: a channel record that replaced an ARC read, or a
+    /// transmitter that changed) leave their flow, which then ends and is
+    /// asked for again from the new record. A record not found now changes
+    /// nothing.
+    fn reresolve(&mut self, resolver: &dyn Resolver) {
+        for rx in 0..self.routes.len() {
+            let Some(route) = &self.routes[rx] else {
+                continue;
+            };
+            let slot = route.flow.slot;
+            let Some(f) = self.flows.get(slot).and_then(Option::as_ref) else {
+                continue;
+            };
+            let Some(now) = resolver.lookup(&route.sub.tx_device, &route.sub.tx_channel) else {
+                continue;
+            };
+            if same_source(&f.advert, &now) {
+                continue;
+            }
+            info!(
+                channel = rx + 1,
+                "RX channel: its transmitter's record changed, its flow is asked for again"
+            );
+            self.routes[rx] = None;
+            // A granted flow no channel uses is stopped by `close`; one
+            // still asked for is given up here.
+            let used = self.routes.iter().flatten().any(|r| r.flow.slot == slot);
+            if !used
+                && self.flows[slot]
+                    .as_ref()
+                    .is_some_and(|f| f.handle.is_none())
+            {
+                self.abandon(slot);
+                self.free(slot, self.now);
+            }
+        }
+    }
+
     /// The subscribed channels without a flow: each routed to a flow that
     /// carries its TX channel already, or listed under its transmitter.
     fn resolve(&mut self, resolver: &dyn Resolver) -> BTreeMap<Ipv4Addr, Vec<(usize, Advertised)>> {
@@ -762,6 +804,7 @@ impl Manager {
                 .and_then(|(rx, _)| self.subs.get(*rx)?.as_ref())
                 .map_or_else(String::new, |s| s.tx_device.to_ascii_lowercase()),
             advertised_ns: first.latency_ns,
+            advert: first,
             since: now,
             handle: None,
             heard: None,
@@ -869,6 +912,14 @@ impl Manager {
                     .is_some_and(|t| now < t.saturating_add(RETRY_NS))
         });
     }
+}
+
+/// Whether two records of a transmitter's channels ask for the same flow:
+/// the same flow control, latency, fpp range and slots (a flow carries
+/// several TX channels, so the channel's id is not compared).
+fn same_source(a: &Advertised, b: &Advertised) -> bool {
+    (a.control, a.latency_ns, a.fpp_min, a.fpp_max, a.nchan)
+        == (b.control, b.latency_ns, b.fpp_min, b.fpp_max, b.nchan)
 }
 
 /// The frames per packet to ask `a`'s transmitter for in a flow of `n`

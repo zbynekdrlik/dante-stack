@@ -37,8 +37,26 @@ use tracing::{debug, info, trace};
 
 use super::resolve::{Advertised, Resolver, instance, parse};
 
-/// A name not answered is asked again after this long.
+/// A name not answered is asked again after this long, once the quick
+/// tries ([`QUICK_NS`]) are spent.
 pub const REQUERY_NS: u64 = 10_000_000_000;
+/// The waits before the second, third and fourth query of a name not
+/// answered: a first query at a device's start can be lost among its own
+/// announcements (iemmixer's box, 31.10.2026).
+pub const QUICK_NS: [u64; 3] = [1_000_000_000, 2_000_000_000, 4_000_000_000];
+/// How long after a name is first wanted the network resolver keeps it
+/// from ARC while the direct query has no answer yet.
+pub const GRACE_NS: u64 = 8_000_000_000;
+
+/// The wait before the next query of a name asked `tries` times without
+/// an answer.
+pub fn requery_after(tries: u32) -> u64 {
+    usize::try_from(tries)
+        .ok()
+        .and_then(|t| t.checked_sub(1))
+        .and_then(|i| QUICK_NS.get(i).copied())
+        .unwrap_or(REQUERY_NS)
+}
 /// An answer is used this long; it is asked again from half of it.
 pub const MAX_AGE_NS: u64 = 120_000_000_000;
 /// Instances kept at most; a lookup of a further one is not asked.
@@ -140,6 +158,10 @@ struct Entry {
     advert: Option<(Advertised, u64)>,
     /// When its last query went out.
     asked: Option<u64>,
+    /// Queries since its last answer.
+    tries: u32,
+    /// When a lookup first wanted it.
+    first: u64,
     /// When a lookup last wanted it.
     wanted: u64,
 }
@@ -167,12 +189,24 @@ impl Table {
         if self.entries.len() >= MAX_INSTANCES && !self.entries.contains_key(&name) {
             return None;
         }
-        let entry = self.entries.entry(name).or_default();
+        let entry = self.entries.entry(name).or_insert_with(|| Entry {
+            first: now,
+            ..Entry::default()
+        });
         entry.wanted = now;
         entry
             .advert
             .filter(|&(_, at)| now.saturating_sub(at) < MAX_AGE_NS)
             .map(|(a, _)| a)
+    }
+
+    /// Whether the instance of `tx_channel` on `tx_device` is still being
+    /// asked for at `now` with no answer yet, within [`GRACE_NS`] of its
+    /// first lookup (the network resolver keeps it from ARC meanwhile).
+    pub fn young(&self, tx_device: &str, tx_channel: &str, now: u64) -> bool {
+        self.entries
+            .get(&key(&instance(tx_device, tx_channel)))
+            .is_some_and(|e| e.advert.is_none() && now.saturating_sub(e.first) < GRACE_NS)
     }
 
     /// The queries due at `now` (each counted as asked): an instance wanted
@@ -188,11 +222,17 @@ impl Table {
             let stale = e
                 .advert
                 .is_none_or(|(_, at)| now.saturating_sub(at) >= MAX_AGE_NS / 2);
-            let waited = e.asked.is_none_or(|t| now.saturating_sub(t) >= REQUERY_NS);
+            let wait = if e.advert.is_some() {
+                REQUERY_NS
+            } else {
+                requery_after(e.tries)
+            };
+            let waited = e.asked.is_none_or(|t| now.saturating_sub(t) >= wait);
             if !(stale && waited) {
                 continue;
             }
             e.asked = Some(now);
+            e.tries = e.tries.saturating_add(1);
             match &e.found.srv {
                 Some((_, host)) if e.found.txt.is_some() && e.advert.is_none() => {
                     out.push(Ask::Host(name.clone(), host.clone()));
@@ -236,6 +276,7 @@ impl Table {
                     info!("a channel record read by a direct instance query");
                     e.advert = Some((a, now));
                     e.found = Found::default();
+                    e.tries = 0;
                     completed += 1;
                 }
                 Err(err) => debug!(%err, "instance answer: not a channel record"),
@@ -360,6 +401,14 @@ impl Instances {
 impl Drop for Instances {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Instances {
+    /// [`Table::young`] at this resolver's time, while its thread runs (a
+    /// resolver that does not query keeps nothing from ARC).
+    pub fn young(&self, tx_device: &str, tx_channel: &str) -> bool {
+        self.started() && lock(&self.table).young(tx_device, tx_channel, self.clock.now())
     }
 }
 
