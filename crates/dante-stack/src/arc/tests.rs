@@ -1125,13 +1125,13 @@ fn an_opcode_inferno_does_not_answer_gets_no_reply() {
     // inferno's catch-all logs the opcode and answers nothing; Dante
     // Controller then asks again after its timeout. Refusing it instead
     // (0xffff) made Dante Controller ask 0x2200 and 0x2204 about 2 250
-    // times a second (#72, 2026-10-26).
+    // times a second (#72, 2026-10-26). 0x2204 is answered since 0.3.5 as
+    // the IEM card answers it (status 0x0030, which the card sends; not a
+    // refusal).
     let mut dev = Dev::new(config());
     dev.state.tx[0] = "Mix 1".into();
     let before = dev.state.clone();
     for (op1, body) in [
-        // Dante Controller's 0x2204 with its captured body.
-        (0x2204, DC_FIRST_PAGE.to_vec()),
         // netaudio's set_latency: not in inferno either (set_name, 0x1001,
         // is answered since v0.2.5).
         (0x1101, vec![0, 0, 0, 5]),
