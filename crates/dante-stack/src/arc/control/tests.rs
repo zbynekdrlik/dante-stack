@@ -312,3 +312,78 @@ fn an_rx_page_counts_a_channel_0_and_does_not_list_it() {
     let listed: Vec<u16> = page.items.iter().map(|c| c.channel).collect();
     assert_eq!(listed, vec![1]);
 }
+
+#[test]
+fn a_subscription_is_netaudio_s_request() {
+    // netaudio: "27ff 00{len} {seq} 3010 0000 0201 00{rx} 0034 00{device
+    // offset} " + 34 zero bytes + "{tx channel} 00 {tx device} 00".
+    let want = [
+        "27ff",
+        "0043",
+        "0000",
+        "3010",
+        "0000",
+        "0201",
+        "0003",
+        "0034",
+        "003a",
+        &"00".repeat(34),
+        &hex(b"Click"),
+        "00",
+        &hex(b"stage-pc"),
+        "00",
+    ];
+    assert_eq!(
+        hex(&subscribe_request(0, 3, "Click", "stage-pc")),
+        want.concat()
+    );
+}
+
+#[test]
+fn an_unsubscription_is_netaudio_s_request() {
+    // netaudio: "27ff 0010 {seq} 3014 0000 0001 0000 00{rx}".
+    let want = [
+        "27ff", "0010", "0000", "3014", "0000", "0001", "0000", "0004",
+    ];
+    assert_eq!(hex(&unsubscribe_request(0, 4)), want.concat());
+}
+
+#[test]
+fn our_device_takes_a_subscription_and_its_end() {
+    let mut own = Own::new();
+    subscribe(&mut own, 2, "Click", "stage-pc").unwrap();
+    let got = rx_channels(&mut own).unwrap();
+    assert_eq!(got[1].tx_channel.as_deref(), Some("Click"));
+    assert_eq!(got[1].tx_device.as_deref(), Some("stage-pc"));
+    assert_eq!(
+        own.state.subscription(1).map(|s| s.tx_device.as_str()),
+        Some("stage-pc")
+    );
+    unsubscribe(&mut own, 2).unwrap();
+    let got = rx_channels(&mut own).unwrap();
+    assert_eq!((got[1].tx_channel.as_deref(), got[1].status), (None, 0));
+    assert!(own.state.subscription(1).is_none());
+}
+
+#[test]
+fn a_refused_subscription_or_end_is_a_refusal() {
+    assert_eq!(
+        subscribe(&mut Fixed(0x0022, Vec::new()), 1, "a", "b"),
+        Err(ReadError::Refused {
+            op: op::RX_SUBSCRIBE,
+            status: 0x0022
+        })
+    );
+    assert_eq!(
+        unsubscribe(&mut Fixed(0x0022, Vec::new()), 1),
+        Err(ReadError::Refused {
+            op: op::RX_UNSUBSCRIBE,
+            status: 0x0022
+        })
+    );
+    assert_eq!(
+        subscribe(&mut Fixed(STATUS_OK, Vec::new()), 1, "a", "b"),
+        Ok(())
+    );
+    assert_eq!(unsubscribe(&mut Fixed(STATUS_OK, Vec::new()), 1), Ok(()));
+}

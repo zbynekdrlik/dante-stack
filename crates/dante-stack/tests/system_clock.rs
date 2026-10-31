@@ -423,3 +423,51 @@ fn discovery_lists_our_running_device_and_its_withdrawal() {
     assert!(!discovery.devices().iter().any(|d| d.name == ours.name));
     discovery.stop().expect("discovery stopped");
 }
+
+#[test]
+fn control_subscribes_our_running_device_and_ends_it() {
+    use dante_stack::arc::client::{REPLY_TIMEOUT, Udp};
+    use dante_stack::arc::control;
+    use std::net::SocketAddrV4;
+    use std::sync::atomic::AtomicU16;
+
+    let _one = ONE_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let ip = routed_ipv4();
+    let opts = Options {
+        config: config_in(dir.path(), true),
+        place: Place::Ip(ip),
+        control: dir.path().join("control.sock"),
+    };
+    let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("the device set up");
+    let name = prepared.config().name.clone();
+    let tx1 = prepared.config().tx[0].clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let host = prepared
+        .start(Signals::Report(Arc::clone(&stop)))
+        .expect("the device started");
+    let seq = AtomicU16::new(1);
+    let requests = dante_stack::ctl::Requests::default();
+    let halt = AtomicBool::new(false);
+    let to = SocketAddrV4::new(ip, dante_stack::arc::PORT);
+    let mut udp = Udp::open(ip, to, &seq, REPLY_TIMEOUT, &requests, &halt).expect("a socket");
+    // Our own RX 2 (RX 1 the config subscribes already) to our own TX 1
+    // (the tests' rule: our device only).
+    let made = control::subscribe(&mut udp, 2, &tx1, &name);
+    let after_made = control::rx_channels(&mut udp);
+    let ended = control::unsubscribe(&mut udp, 2);
+    let after_end = control::rx_channels(&mut udp);
+    let stopped = host.stop(Duration::from_secs(5));
+    made.expect("the subscription answered OK");
+    let after_made = after_made.expect("the RX channels read");
+    assert_eq!(after_made[1].tx_channel.as_deref(), Some(tx1.as_str()));
+    assert_eq!(after_made[1].tx_device.as_deref(), Some(name.as_str()));
+    assert!(after_made[1].sub_status().is_some(), "{:?}", after_made[1]);
+    ended.expect("the end answered OK");
+    let after_end = after_end.expect("the RX channels read again");
+    assert_eq!(
+        (after_end[1].tx_channel.as_deref(), after_end[1].status),
+        (None, 0)
+    );
+    assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
+}
