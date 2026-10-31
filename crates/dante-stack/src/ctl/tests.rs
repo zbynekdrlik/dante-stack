@@ -622,6 +622,8 @@ const WORDS: &[&str] = &[
     "late_bins",
     "late_max_us",
     "send_max_us",
+    "age_max_us",
+    "over_latency",
     "rx",
     "granted",
     "latency",
@@ -1262,4 +1264,26 @@ mod socket {
         let err = bind_control(&dir.path().join("none/control.sock")).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
+}
+
+#[test]
+fn a_lane_s_times_show_in_whole_microseconds() {
+    let lane = LaneCounts {
+        packets: 7,
+        late_max_ns: 204_999,
+        send_max_ns: 56_001,
+        age_max_ns: 416_700,
+        over_latency: 80,
+        ..LaneCounts::default()
+    };
+    let mut j = Json::new();
+    j.open(None, '{');
+    lane_fields(&mut j, &lane);
+    j.close('}');
+    assert_eq!(
+        j.out,
+        "{\"packets\":7,\"send_errors\":0,\"keepalives\":0,\"rebootstraps\":0,\
+         \"holes\":0,\"late_bins\":[0,0,0,0,0,0],\"late_max_us\":204,\"send_max_us\":56,\
+         \"age_max_us\":416,\"over_latency\":80}"
+    );
 }

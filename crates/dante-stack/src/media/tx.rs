@@ -813,6 +813,12 @@ fn nanos(d: std::time::Duration) -> u64 {
     u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
+/// Whether a packet `age_ns` past its stamp is late at a receiver whose
+/// latency is `latency_ns`: at the latency itself it still plays.
+pub fn over_latency(age_ns: u64, latency_ns: u64) -> bool {
+    age_ns > latency_ns
+}
+
 /// The media clock a schedule runs on: the samples at `rate` up to
 /// `margin_ns` before `now_ns`.
 pub fn send_clock(now_ns: u64, rate: u32, margin_ns: u64) -> u64 {
@@ -1042,7 +1048,7 @@ impl Transmitter {
                 // A receiver's lateness: the arrival past the stamp.
                 let age = left.saturating_sub(ns_of(stamp, *rate));
                 stats.age_max_ns.fetch_max(age, Ordering::Relaxed);
-                if age > *latency_ns {
+                if over_latency(age, *latency_ns) {
                     stats.over_latency.fetch_add(1, Ordering::Relaxed);
                 }
                 stats.late[late_bin(late)].fetch_add(1, Ordering::Relaxed);

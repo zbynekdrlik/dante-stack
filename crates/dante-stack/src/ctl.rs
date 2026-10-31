@@ -708,23 +708,28 @@ fn tx_part(j: &mut Json, media: &Media) {
         j.flag("live", !expired);
         j.num("fpp", fpp);
         j.num("channels", channels);
-        j.num("packets", lane.packets);
-        j.num("send_errors", lane.send_errors);
-        j.num("keepalives", lane.keepalives);
-        j.num("rebootstraps", lane.rebootstraps);
-        j.num("holes", lane.holes);
-        j.open(Some("late_bins"), '[');
-        for n in lane.late_bins {
-            j.item(n);
-        }
-        j.close(']');
-        j.num("late_max_us", lane.late_max_ns / 1_000);
-        j.num("send_max_us", lane.send_max_ns / 1_000);
-        j.num("age_max_us", lane.age_max_ns / 1_000);
-        j.num("over_latency", lane.over_latency);
+        lane_fields(j, &lane);
         j.close('}');
     }
     j.close(']');
+}
+
+/// A TX lane's counts as the status shows them (µs for the times).
+fn lane_fields(j: &mut Json, lane: &LaneCounts) {
+    j.num("packets", lane.packets);
+    j.num("send_errors", lane.send_errors);
+    j.num("keepalives", lane.keepalives);
+    j.num("rebootstraps", lane.rebootstraps);
+    j.num("holes", lane.holes);
+    j.open(Some("late_bins"), '[');
+    for n in lane.late_bins {
+        j.item(n);
+    }
+    j.close(']');
+    j.num("late_max_us", lane.late_max_ns / 1_000);
+    j.num("send_max_us", lane.send_max_ns / 1_000);
+    j.num("age_max_us", lane.age_max_ns / 1_000);
+    j.num("over_latency", lane.over_latency);
 }
 
 /// An RX flow as the status shows it.

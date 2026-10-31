@@ -1464,3 +1464,10 @@ fn a_packet_older_than_the_latency_since_its_stamp_counts_as_over_latency() {
         "{lane:?}, step took {took} ns"
     );
 }
+
+#[test]
+fn a_packet_at_the_latency_still_plays_and_one_ns_more_is_late() {
+    assert!(!over_latency(250_000, 250_000));
+    assert!(over_latency(250_001, 250_000));
+    assert!(!over_latency(0, 250_000));
+}
