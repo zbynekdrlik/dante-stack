@@ -357,17 +357,44 @@ pub fn wait_mode_for(profile: TimingProfile) -> WaitMode {
     }
 }
 
-static PROFILE: std::sync::OnceLock<TimingProfile> = std::sync::OnceLock::new();
+/// A timing profile set once ([`set_profile`] keeps the process's).
+#[derive(Debug, Default)]
+pub struct ProfileCell(std::sync::OnceLock<TimingProfile>);
+
+impl ProfileCell {
+    pub const fn new() -> Self {
+        Self(std::sync::OnceLock::new())
+    }
+
+    /// Sets the profile, once: `false` when another one was set before.
+    pub fn set(&self, profile: TimingProfile) -> bool {
+        *self.0.get_or_init(|| profile) == profile
+    }
+
+    /// The profile set ([`TimingProfile::LowLatency`] until one is).
+    pub fn get(&self) -> TimingProfile {
+        self.0.get().copied().unwrap_or_default()
+    }
+}
+
+static PROFILE: ProfileCell = ProfileCell::new();
 
 /// Sets this process's timing profile, once (the device's config, before
 /// its media threads start); `false` when another one was set before.
 pub fn set_profile(profile: TimingProfile) -> bool {
-    *PROFILE.get_or_init(|| profile) == profile
+    PROFILE.set(profile)
 }
 
 /// This process's timing profile ([`TimingProfile::LowLatency`] until set).
 pub fn profile() -> TimingProfile {
-    PROFILE.get().copied().unwrap_or_default()
+    PROFILE.get()
+}
+
+/// Whether a media thread under `profile` asks for real-time priority:
+/// low latency does, normal (an application that needs no lowest latency)
+/// does not.
+pub fn realtime_for(profile: TimingProfile) -> bool {
+    profile == TimingProfile::LowLatency
 }
 
 /// This process's wait mode ([`wait_mode_for`] its profile).

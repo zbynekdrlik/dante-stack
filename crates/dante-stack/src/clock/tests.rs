@@ -701,3 +701,24 @@ fn the_normal_profile_waits_on_the_timer_and_low_latency_spins() {
     assert_eq!(wait_mode_for(TimingProfile::LowLatency), WaitMode::Spin);
     assert_eq!(wait_mode_for(TimingProfile::Normal), WaitMode::Timer);
 }
+
+#[test]
+fn a_profile_cell_keeps_the_first_profile_and_refuses_another() {
+    let cell = ProfileCell::new();
+    assert_eq!(
+        cell.get(),
+        TimingProfile::LowLatency,
+        "low latency until set"
+    );
+    assert!(cell.set(TimingProfile::Normal));
+    assert_eq!(cell.get(), TimingProfile::Normal);
+    assert!(cell.set(TimingProfile::Normal), "the same again is fine");
+    assert!(!cell.set(TimingProfile::LowLatency), "another is refused");
+    assert_eq!(cell.get(), TimingProfile::Normal);
+}
+
+#[test]
+fn only_the_low_latency_profile_asks_for_real_time_priority() {
+    assert!(realtime_for(TimingProfile::LowLatency));
+    assert!(!realtime_for(TimingProfile::Normal));
+}

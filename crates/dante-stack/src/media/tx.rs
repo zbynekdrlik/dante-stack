@@ -1067,7 +1067,7 @@ fn run(clock: &dyn PtpClock, shared: Arc<TxShared>) {
 /// asks too ([`super::rx`]).
 #[cfg(target_os = "linux")]
 pub(crate) fn ask_realtime(priority: i32) -> bool {
-    if crate::clock::profile() == crate::device::TimingProfile::Normal {
+    if !crate::clock::realtime_for(crate::clock::profile()) {
         return false;
     }
     let param = libc::sched_param {
@@ -1087,7 +1087,7 @@ pub(crate) fn ask_realtime(priority: i32) -> bool {
 /// and TX holes at W 0.33 ms). `false` when Windows refuses it.
 #[cfg(windows)]
 pub(crate) fn ask_realtime(_priority: i32) -> bool {
-    if crate::clock::profile() == crate::device::TimingProfile::Normal {
+    if !crate::clock::realtime_for(crate::clock::profile()) {
         return false;
     }
     use windows_sys::Win32::System::Threading::{
