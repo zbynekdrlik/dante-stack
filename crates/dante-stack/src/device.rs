@@ -140,6 +140,23 @@ pub struct DeviceConfig {
     /// core on Windows and no real-time priority for the media threads.
     #[serde(default)]
     pub timing: TimingProfile,
+    /// The ARC port (UDP), advertised in the `_netaudio-arc` SRV:
+    /// `arc::PORT` (4440) when left out.
+    #[serde(default = "default_arc_port")]
+    pub arc_port: u16,
+    /// The CMC port (UDP), advertised in the `_netaudio-cmc` SRV:
+    /// `cmc::PORT` (8800) when left out.
+    #[serde(default = "default_cmc_port")]
+    pub cmc_port: u16,
+    /// The flow-control port (UDP), advertised in the channel records:
+    /// `flows::control::PORT` (4455) when left out.
+    #[serde(default = "default_flows_port")]
+    pub flows_port: u16,
+    /// The process id, in the device id (`cmc::device_id`), the mDNS
+    /// `process` and the flow names: several devices on one address need
+    /// distinct ones. `cmc::PROCESS_ID` (0) when left out.
+    #[serde(default)]
+    pub process_id: u16,
     /// Where the state ([`DeviceState`]) is kept.
     pub state_file: PathBuf,
 }
@@ -285,6 +302,18 @@ impl DeviceConfig {
         }
         out
     }
+}
+
+fn default_arc_port() -> u16 {
+    crate::arc::PORT
+}
+
+fn default_cmc_port() -> u16 {
+    crate::cmc::PORT
+}
+
+fn default_flows_port() -> u16 {
+    crate::flows::control::PORT
 }
 
 fn default_block() -> u64 {

@@ -29,21 +29,22 @@ pub const ADVERTISE: u16 = 0x1001;
 /// `INFO_REQUEST_PORT`), served by [`crate::info`].
 pub const INFO_REQUEST_PORT: u16 = crate::info::REQUEST_PORT;
 /// The device's process id (inferno's default): one device on the box.
+/// The process id when the config names none (inferno's default).
 pub const PROCESS_ID: u16 = 0;
 const RECV_BUFFER: usize = 2048;
 
 /// The device's 8-byte id: two zero bytes, the IPv4 address, the process
 /// id (inferno's default when none is configured). The mDNS `id` entry is
 /// its hex.
-pub fn device_id(ip: Ipv4Addr) -> [u8; 8] {
+pub fn device_id(ip: Ipv4Addr, process: u16) -> [u8; 8] {
     let [a, b, c, d] = ip.octets();
-    let [p, q] = PROCESS_ID.to_be_bytes();
+    let [p, q] = process.to_be_bytes();
     [0, 0, a, b, c, d, p, q]
 }
 
 /// The reply to a CMC datagram: the advertisement for 0x1001 with op2 0,
 /// nothing for anything else.
-pub fn handle_cmc(req: &[u8], ip: Ipv4Addr) -> Option<Vec<u8>> {
+pub fn handle_cmc(req: &[u8], ip: Ipv4Addr, process: u16) -> Option<Vec<u8>> {
     let (h, _) = Header::parse(req).ok()?;
     if h.op1 != ADVERTISE || h.op2 != 0 {
         debug!(
@@ -53,15 +54,15 @@ pub fn handle_cmc(req: &[u8], ip: Ipv4Addr) -> Option<Vec<u8>> {
         );
         return None;
     }
-    Some(reply(&h, STATUS_OK, &advertisement(ip)))
+    Some(reply(&h, STATUS_OK, &advertisement(ip, process)))
 }
 
 /// inferno's `DeviceAdvertisement`: process id, device id, 1, 0, the
 /// address, the info request port, 0.
-fn advertisement(ip: Ipv4Addr) -> Vec<u8> {
+fn advertisement(ip: Ipv4Addr, process: u16) -> Vec<u8> {
     let mut out = Vec::with_capacity(22);
-    out.extend_from_slice(&PROCESS_ID.to_be_bytes());
-    out.extend_from_slice(&device_id(ip));
+    out.extend_from_slice(&process.to_be_bytes());
+    out.extend_from_slice(&device_id(ip, process));
     out.extend_from_slice(&1u16.to_be_bytes());
     out.extend_from_slice(&0u16.to_be_bytes());
     out.extend_from_slice(&ip.octets());
@@ -73,12 +74,17 @@ fn advertisement(ip: Ipv4Addr) -> Vec<u8> {
 /// The CMC server for the device at `ip` (the address it is reached at,
 /// which the advertisement names); every datagram counted in `requests`.
 /// Ends only with an error receiving.
-pub async fn serve_cmc(sock: UdpSocket, ip: Ipv4Addr, requests: Arc<Requests>) -> io::Result<()> {
+pub async fn serve_cmc(
+    sock: UdpSocket,
+    ip: Ipv4Addr,
+    process: u16,
+    requests: Arc<Requests>,
+) -> io::Result<()> {
     let mut buf = vec![0u8; RECV_BUFFER];
     loop {
         let (n, peer) = sock.recv_from(&mut buf).await?;
         requests.received(PORT, peer.ip(), header_op(&buf[..n]));
-        if let Some(bytes) = handle_cmc(&buf[..n], ip)
+        if let Some(bytes) = handle_cmc(&buf[..n], ip, process)
             && let Err(e) = sock.send_to(&bytes, peer).await
         {
             warn!(error = %e, "a CMC reply could not be sent");
@@ -99,16 +105,16 @@ mod tests {
 
     #[test]
     fn the_device_id_is_the_address_between_zeros() {
-        assert_eq!(device_id(IP), [0, 0, 10, 0, 0, 10, 0, 0]);
+        assert_eq!(device_id(IP, 0), [0, 0, 10, 0, 0, 10, 0, 0]);
         assert_eq!(
-            device_id(Ipv4Addr::new(192, 0, 2, 254)),
+            device_id(Ipv4Addr::new(192, 0, 2, 254), 0),
             [0, 0, 192, 0, 2, 254, 0, 0]
         );
     }
 
     #[test]
     fn the_advertisement_names_the_device_by_its_address() {
-        let reply = handle_cmc(&request(0x27ff, 0x4321, ADVERTISE, 0, &[]), IP).unwrap();
+        let reply = handle_cmc(&request(0x27ff, 0x4321, ADVERTISE, 0, &[]), IP, 0).unwrap();
         let (h, body) = Header::parse(&reply).unwrap();
         assert_eq!(
             (h.start, h.seq, h.op1, h.op2),
@@ -131,18 +137,21 @@ mod tests {
         // inferno answers only 0x1001 with op2 0; Dante Controller asks again.
         for op1 in [0x1000, 0x1002, 0x0000, 0xffff] {
             assert_eq!(
-                handle_cmc(&request(0x27ff, 1, op1, 0, &[]), IP),
+                handle_cmc(&request(0x27ff, 1, op1, 0, &[]), IP, 0),
                 None,
                 "{op1:#06x}"
             );
         }
-        assert_eq!(handle_cmc(&request(0x27ff, 1, ADVERTISE, 1, &[]), IP), None);
+        assert_eq!(
+            handle_cmc(&request(0x27ff, 1, ADVERTISE, 1, &[]), IP, 0),
+            None
+        );
         let mut cut = request(0x27ff, 1, ADVERTISE, 0, &[]);
         cut.pop();
-        assert_eq!(handle_cmc(&cut, IP), None);
-        assert_eq!(handle_cmc(&[], IP), None);
+        assert_eq!(handle_cmc(&cut, IP, 0), None);
+        assert_eq!(handle_cmc(&[], IP, 0), None);
         // A body after the request is no reason to refuse it.
-        assert!(handle_cmc(&request(0x27ff, 1, ADVERTISE, 0, &[1, 2, 3]), IP).is_some());
+        assert!(handle_cmc(&request(0x27ff, 1, ADVERTISE, 0, &[1, 2, 3]), IP, 0).is_some());
     }
 
     #[tokio::test]
@@ -150,7 +159,7 @@ mod tests {
         let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr = sock.local_addr().unwrap();
         let requests = Arc::new(Requests::default());
-        let task = tokio::spawn(serve_cmc(sock, IP, Arc::clone(&requests)));
+        let task = tokio::spawn(serve_cmc(sock, IP, 0, Arc::clone(&requests)));
         let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         // An unknown request gets no answer; the next one does.
         peer.send_to(&request(0x27ff, 1, 0x1000, 0, &[]), addr)
@@ -179,5 +188,14 @@ mod tests {
             .collect();
         assert_eq!(seen, [(PORT, 1, 0x1000, 1), (PORT, 1, ADVERTISE, 1)]);
         task.abort();
+    }
+
+    #[test]
+    fn the_advertisement_and_the_id_carry_the_process_id() {
+        assert_eq!(device_id(IP, 0x0102), [0, 0, 10, 0, 0, 10, 1, 2]);
+        let reply = handle_cmc(&request(0x27ff, 1, ADVERTISE, 0, &[]), IP, 0x0102).unwrap();
+        let (_, body) = Header::parse(&reply).unwrap();
+        assert_eq!(&body[..2], &[1, 2], "the process id first");
+        assert_eq!(&body[2..10], &device_id(IP, 0x0102));
     }
 }

@@ -506,3 +506,26 @@ fn the_announcer_publishes_the_set_it_registered() {
     assert!(a2.announce(&first).is_err());
     assert!(a2.published().lock().unwrap().is_empty());
 }
+
+#[test]
+fn the_records_carry_the_config_s_ports_and_process_id() {
+    let mut cfg = config();
+    cfg.arc_port = 4441;
+    cfg.cmc_port = 8801;
+    cfg.flows_port = 4456;
+    cfg.process_id = 2;
+    let state = DeviceState::from_config(&cfg);
+    let recs = records(&state, &cfg, HOST, IP);
+    let port_of = |service| recs.iter().find(|r| r.service == service).unwrap().port;
+    assert_eq!(port_of(ARC_SERVICE), 4441);
+    assert_eq!(port_of(CMC_SERVICE), 8801);
+    assert!(
+        recs.iter()
+            .filter(|r| r.service == CHAN_SERVICE)
+            .all(|r| r.port == 4456)
+    );
+    let cmc = recs.iter().find(|r| r.service == CMC_SERVICE).unwrap();
+    assert!(cmc.txt.contains(&"process=2".to_string()), "{:?}", cmc.txt);
+    let id = format!("id={}", hex(&crate::cmc::device_id(IP, 2)));
+    assert!(cmc.txt.contains(&id), "{:?}", cmc.txt);
+}

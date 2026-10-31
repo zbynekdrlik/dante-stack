@@ -260,7 +260,12 @@ fn seed() -> u64 {
 }
 
 /// The four servers' sockets, each bound to `ip` (in `rt`).
-fn bind_sockets(rt: &Runtime, ip: std::net::Ipv4Addr) -> Result<Sockets, HostError> {
+fn bind_sockets(
+    rt: &Runtime,
+    ip: std::net::Ipv4Addr,
+    cfg: &DeviceConfig,
+) -> Result<Sockets, HostError> {
+    let (arc_port, cmc_port, flows_port) = (cfg.arc_port, cfg.cmc_port, cfg.flows_port);
     rt.block_on(async {
         let bind = |port: u16, what: &'static str| async move {
             let sock = UdpSocket::bind((ip, port))
@@ -277,10 +282,10 @@ fn bind_sockets(rt: &Runtime, ip: std::net::Ipv4Addr) -> Result<Sockets, HostErr
             .set_multicast_if_v4(&ip)
             .map_err(|e| run_failed(format!("the info server's multicast interface: {e}")))?;
         Ok(Sockets {
-            arc: bind(arc::PORT, "ARC").await?,
-            cmc: bind(cmc::PORT, "CMC").await?,
+            arc: bind(arc_port, "ARC").await?,
+            cmc: bind(cmc_port, "CMC").await?,
             info,
-            flows: bind(flows::control::PORT, "flow control").await?,
+            flows: bind(flows_port, "flow control").await?,
         })
     })
 }
@@ -364,7 +369,7 @@ pub fn prepare_with(
         .enable_all()
         .build()
         .map_err(run_failed)?;
-    let sockets = bind_sockets(&rt, net.ip)?;
+    let sockets = bind_sockets(&rt, net.ip, &device.cfg)?;
     // The media clock: PTP time from dantesync on the box, polled once a
     // second for the device's life (from the start).
     let mono = Arc::new(MonoClock::new());

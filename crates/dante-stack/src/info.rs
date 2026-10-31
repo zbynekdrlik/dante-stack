@@ -93,7 +93,7 @@ use tokio::time::MissedTickBehavior;
 use tracing::{debug, info, warn};
 
 use crate::clock::PtpClock;
-use crate::cmc::{PROCESS_ID, device_id};
+use crate::cmc::device_id;
 use crate::ctl::{Requests, info_op};
 use crate::device::DeviceConfig;
 use crate::media::rx::{MAX_FLOWS, RxShared};
@@ -188,12 +188,15 @@ pub struct Identity {
     /// patch (a big-endian u16), as inferno sends its crate's.
     pub version: [u8; 4],
     pub net: NetInfo,
+    /// The process id (the config's; several devices on one address).
+    pub process: u16,
 }
 
 impl Identity {
     pub fn new(cfg: &DeviceConfig, net: NetInfo) -> Self {
         Self {
-            device_id: device_id(net.ip),
+            device_id: device_id(net.ip, cfg.process_id),
+            process: cfg.process_id,
             manufacturer: cfg.manufacturer.clone(),
             model: cfg.model.clone(),
             version: product_version(),
@@ -522,7 +525,7 @@ impl Multicaster {
         out.extend_from_slice(&start.to_be_bytes());
         out.extend_from_slice(&len.to_be_bytes());
         out.extend_from_slice(&self.seq.to_be_bytes());
-        out.extend_from_slice(&PROCESS_ID.to_be_bytes());
+        out.extend_from_slice(&self.id.process.to_be_bytes());
         out.extend_from_slice(&self.id.device_id);
         out.extend_from_slice(&VENDOR);
         out.extend_from_slice(&opcode);

@@ -86,7 +86,6 @@ use tokio::sync::Notify;
 use tokio::time::MissedTickBehavior;
 use tracing::{debug, error, info, warn};
 
-use crate::cmc::PROCESS_ID;
 use crate::ctl::{Requests, header_op};
 use crate::device::{
     Device, DeviceConfig, DeviceState, Subscription, channel_problems, valid_channel_name,
@@ -582,7 +581,7 @@ fn tx_flows(h: &Header, req: &[u8], cfg: &DeviceConfig, tx: &TxTable) -> ArcOutc
         |slot, out| {
             let f = tx.flow(slot)?;
             let id = wire_u16(slot + 1);
-            let local = out.cstr(&format!("{id}_{PROCESS_ID}"));
+            let local = out.cstr(&format!("{id}_{}", cfg.process_id));
             let host = out.cstr(capped(&f.rx_host));
             let name = out.cstr(capped(&f.rx_flow_name));
             out.align(4);

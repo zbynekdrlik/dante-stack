@@ -140,7 +140,7 @@ fn the_ports_and_groups_are_inferno_s() {
 fn the_identity_is_the_config_s_and_the_interface_s() {
     let id = identity();
     assert_eq!(id.device_id, [0, 0, 10, 0, 0, 10, 0, 0]);
-    assert_eq!(id.device_id, crate::cmc::device_id(IP));
+    assert_eq!(id.device_id, crate::cmc::device_id(IP, 0));
     assert_eq!(id.manufacturer, "iemmixer");
     assert_eq!(id.model, "iem-dante");
     assert_eq!(id.version, workspace_version());
