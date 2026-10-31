@@ -958,3 +958,116 @@ fn a_status_code_reads_back_as_its_status_and_others_as_none() {
     assert_eq!(SubStatus::from_code(0), None);
     assert_eq!(SubStatus::from_code(9), None);
 }
+
+/// A wireless mic as the ARC directory offers it: 2 slots, fpp 4 only.
+fn mic(id: u16) -> Advertised {
+    Advertised {
+        control: SocketAddrV4::new(MIC_IP, 4455),
+        tx_channel_id: id,
+        nchan: 2,
+        bits: 24,
+        rate: 96_000,
+        dbcp1: 0x1102,
+        fpp_min: 4,
+        fpp_max: 4,
+        latency_ns: 0,
+    }
+}
+
+const MIC_IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 12);
+
+/// `seconds` of ticks; each request to the mic is answered by `mic_answer`
+/// for its fpp, every other request is granted. The requests (time in s,
+/// transmitter, fpp).
+fn run_with_mic(
+    m: &mut Manager,
+    net: &Fake,
+    seconds: u64,
+    mic_answer: impl Fn(u16) -> Answer,
+) -> Vec<(u64, Ipv4Addr, u16)> {
+    let mut asked = Vec::new();
+    let mut t = 0;
+    let mut cookie = 0u8;
+    while t <= seconds * S {
+        for a in m.tick(t, &NONE, net) {
+            if let Action::Request { flow, to, req } = &a {
+                asked.push((t / S, *to.ip(), req.fpp));
+                cookie = cookie.wrapping_add(1);
+                let answer = if *to.ip() == MIC_IP {
+                    mic_answer(req.fpp)
+                } else {
+                    Answer::Granted([0, 0, 0, 1, 0, cookie])
+                };
+                m.answered(*flow, answer, t);
+            }
+        }
+        t += 100 * MS;
+    }
+    asked
+}
+
+#[test]
+fn a_transmitter_refusing_the_fpp_with_0x0314_is_asked_again_with_a_larger_one() {
+    // iemmixer, 31.10.2026: a 2-channel wireless mic with a free flow
+    // answered our fpp-4 request with 0x0314 every 72 s (dstack #1).
+    let net = peer_network();
+    net.add("mic", "Vox", mic(1));
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    m.set(1, Some(sub("TX 1", "peer-device")));
+    let asked = run_with_mic(&mut m, &net, 60, |fpp| {
+        if fpp < 16 {
+            Answer::Refused(0x0314)
+        } else {
+            Answer::Granted([0, 0, 0, 9, 0, 9])
+        }
+    });
+    let to_mic: Vec<u16> = asked
+        .iter()
+        .filter(|(_, ip, _)| *ip == MIC_IP)
+        .map(|&(_, _, fpp)| fpp)
+        .collect();
+    // The test sends no audio, so a granted flow expires and is asked for
+    // again: at 16, the step it was granted.
+    assert_eq!(&to_mic[..3], [4, 8, 16], "{asked:?}");
+    assert!(to_mic[3..].iter().all(|&f| f == 16), "{asked:?}");
+    // The other transmitter keeps its own fpp (its most, 16).
+    let to_peer: Vec<u16> = asked
+        .iter()
+        .filter(|(_, ip, _)| *ip == PEER_IP)
+        .map(|&(_, _, fpp)| fpp)
+        .collect();
+    assert!(
+        !to_peer.is_empty() && to_peer.iter().all(|&f| f == 16),
+        "{asked:?}"
+    );
+    // The step is kept: a new subscription to the mic asks 16 at once.
+    m.set(2, Some(sub("Vox", "mic")));
+    m.set(0, None);
+    let again = run_with_mic(&mut m, &net, 30, |_| Answer::Granted([0, 0, 0, 9, 0, 7]));
+    assert!(
+        again
+            .iter()
+            .filter(|(_, ip, _)| *ip == MIC_IP)
+            .all(|&(_, _, fpp)| fpp == 16),
+        "{again:?}"
+    );
+}
+
+#[test]
+fn the_fpp_steps_stop_at_32_and_the_refusal_then_counts_as_a_failure() {
+    let net = Fake::default();
+    net.add("mic", "Vox", mic(1));
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    let asked = run_with_mic(&mut m, &net, 200, |_| Answer::Refused(0x0314));
+    let fpps: Vec<u16> = asked.iter().map(|&(_, _, fpp)| fpp).collect();
+    assert_eq!(&fpps[..4], [4, 8, 16, 32], "{asked:?}");
+    assert!(fpps[4..].iter().all(|&f| f == 32), "{asked:?}");
+    // After the last step the transmitter's failures back off as any
+    // refusal does (9, 18, 36, 72 s), never faster than 9 s.
+    let times: Vec<u64> = asked.iter().map(|&(t, _, _)| t).collect();
+    assert!(times.windows(2).all(|w| w[1] - w[0] >= 9), "{times:?}");
+    assert!(times.len() <= 3 + 1 + 200 / 9, "{times:?}");
+    assert_eq!(m.status(0), Some(SubStatus::TxFail));
+}
