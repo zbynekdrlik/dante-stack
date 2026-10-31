@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.6 (2026-10-31)
+
+- Fix (iemmixer, dstack #1 problem C): a transmitter that refuses our flow request with status 0x0314 (`flows::control::status::FPP_REFUSED`) is asked again with twice the frames per packet: 8, 16, then 32 (`subscribe::FPP_STEP_MAX`, the most Dante devices advertise). A 2-channel wireless mic with a free flow answered 0x0314 to our fpp-4 request every 72 s; ARC names no fpp, so the ARC directory offers the config's `arc_rx_fpp` to every device. The step is per transmitter, kept while the device runs (at most 64 transmitters), applied only where the flow still fits a datagram, and other transmitters keep their fpp. A step counts no failure, so the next request comes after 9 s. A refusal at 32 counts as a failure with the usual backoff. Logs: "RX flow refused (0x0314, its fpp): the next request asks a larger fpp" with `fpp` and `next`; the accepted fpp is the one on the "RX flow requested" line before "RX flow granted".
+
 ## 0.3.5 (2026-10-31)
 
 - Fix (dstack #1, quirk catalog): Dante Controller's ARC 0x2204 got no reply, and Dante Controller asked it, and 0x2200 with it, 3 times per read. It now gets status 0x0030 and no body, as the IEM card (a Yamaha Dante card) answers it in the 30.10 capture; replay test `dante_controller_s_0x2204_is_answered_as_the_iem_card_answers_it`. This is a card's answer, not the 0xffff refusal that once caused a request storm. On dev1, 2 minutes after the start, each of the two Dante Controllers on the network asked 0x2204 and 0x2200 once, with no warning.

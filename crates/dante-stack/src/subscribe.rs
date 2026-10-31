@@ -65,6 +65,8 @@ pub mod resolve;
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 
+use tracing::{info, warn};
+
 use crate::clock::to_samples;
 use crate::cmc::PROCESS_ID;
 use crate::device::{DeviceConfig, Subscription};
@@ -85,6 +87,14 @@ pub const TICK: std::time::Duration = std::time::Duration::from_nanos(TICK_NS);
 /// The least time between two requests to one transmitter (inferno's 9 s
 /// between resolves).
 pub const RETRY_NS: u64 = 9_000_000_000;
+/// The largest fpp a refusal with [`status::FPP_REFUSED`] steps up to:
+/// the most Dante devices advertise ([`crate::announce::FPP_MAX`]).
+pub const FPP_STEP_MAX: u16 = crate::announce::FPP_MAX;
+/// Every fpp step fits one datagram in any flow [`fpp_for`] accepts (at
+/// most [`MAX_CHANNELS`] slots of at most 4 bytes).
+const _: () = assert!(MEDIA_HEADER + MAX_CHANNELS * 4 * FPP_STEP_MAX as usize <= MAX_DATAGRAM);
+/// Transmitters whose fpp step is kept at most.
+pub const MAX_FPP_FLOORS: usize = 64;
 /// The most time between two requests to a transmitter that keeps failing.
 pub const RETRY_MAX_NS: u64 = 72_000_000_000;
 /// A request without an answer for this long has failed (the client waits
@@ -259,6 +269,10 @@ pub struct Manager {
     freed: [Option<u64>; MAX_FLOWS],
     generation: u32,
     peers: BTreeMap<Ipv4Addr, Peer>,
+    /// The least fpp each transmitter is asked for, after it refused a
+    /// smaller one with [`status::FPP_REFUSED`] (at most [`MAX_FPP_FLOORS`]
+    /// transmitters; kept while the manager lives).
+    fpp_floor: BTreeMap<Ipv4Addr, u16>,
     /// Requests given up on: a grant that comes after all is stopped.
     abandoned: Vec<(FlowId, SocketAddrV4)>,
     /// The statuses [`Manager::changed`] reported last.
@@ -290,6 +304,7 @@ impl Manager {
             freed: [None; MAX_FLOWS],
             generation: 0,
             peers: BTreeMap::new(),
+            fpp_floor: BTreeMap::new(),
             abandoned: Vec::new(),
             reported: vec![None; n],
             now: 0,
@@ -399,6 +414,7 @@ impl Manager {
             Answer::Refused(status::TOO_MANY_TX_FLOWS) => {
                 self.fail(flow.slot, SubStatus::TooManyTxFlows, now)
             }
+            Answer::Refused(status::FPP_REFUSED) => self.fpp_refused(flow.slot, now),
             Answer::Refused(_) | Answer::Failed => self.fail(flow.slot, SubStatus::TxFail, now),
         }
         Vec::new()
@@ -655,6 +671,12 @@ impl Manager {
             }
             return None;
         };
+        // A transmitter that refused a smaller fpp (0x0314) gets its step;
+        // a step always fits a datagram (the `const` assertion at FPP_STEP_MAX).
+        let fpp = self
+            .fpp_floor
+            .get(first.control.ip())
+            .map_or(fpp, |&floor| floor.max(fpp));
         let slot = self.free_slot()?;
         // Each TX channel once, in RX order; the first n fill the slots, the
         // rest wait for the next flow.
@@ -711,6 +733,38 @@ impl Manager {
         (0..MAX_FLOWS)
             .filter(|&s| self.flows[s].is_none())
             .min_by_key(|&s| (self.freed[s], s))
+    }
+
+    /// The transmitter of flow slot `slot` refused its fpp
+    /// ([`status::FPP_REFUSED`]): its next request asks twice the fpp, up to
+    /// [`FPP_STEP_MAX`], and this refusal counts no failure (the next
+    /// request comes after [`RETRY_NS`]); at [`FPP_STEP_MAX`] it is a
+    /// failure as any refusal.
+    fn fpp_refused(&mut self, slot: usize, now: u64) {
+        let Some(f) = &self.flows[slot] else { return };
+        let (ip, fpp) = (*f.to.ip(), f.fpp);
+        let next = fpp.saturating_mul(2).min(FPP_STEP_MAX);
+        let known = self.fpp_floor.contains_key(&ip);
+        if next <= fpp || (!known && self.fpp_floor.len() >= MAX_FPP_FLOORS) {
+            warn!(
+                fpp,
+                "RX flow refused (0x0314) at the largest fpp step: not asked larger"
+            );
+            self.fail(slot, SubStatus::TxFail, now);
+            return;
+        }
+        info!(
+            fpp,
+            next, "RX flow refused (0x0314, its fpp): the next request asks a larger fpp"
+        );
+        self.fpp_floor.insert(ip, next);
+        for (route, failed) in self.routes.iter_mut().zip(self.failed.iter_mut()) {
+            if route.as_ref().is_some_and(|r| r.flow.slot == slot) {
+                *route = None;
+                *failed = None;
+            }
+        }
+        self.free(slot, now);
     }
 
     /// The request of flow slot `slot` failed with `why`: its channels
