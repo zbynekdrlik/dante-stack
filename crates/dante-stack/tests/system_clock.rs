@@ -366,3 +366,60 @@ fn card_reads_and_writes_our_running_device() {
     );
     assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
 }
+
+#[test]
+fn discovery_lists_our_running_device_and_its_withdrawal() {
+    use dante_stack::discover::{Change, Discovery};
+    use std::net::SocketAddrV4;
+
+    let _one = ONE_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let ip = routed_ipv4();
+    let opts = Options {
+        config: config_in(dir.path(), false),
+        place: Place::Ip(ip),
+        control: dir.path().join("control.sock"),
+    };
+    let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("the device set up");
+    let name = prepared.config().name.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let host = prepared
+        .start(Signals::Report(Arc::clone(&stop)))
+        .expect("the device started");
+    let (discovery, changes) = Discovery::start(ip).expect("discovery started");
+    // Other Dante devices may share the network: wait for ours by name.
+    let deadline = Instant::now() + BOUND;
+    let ours = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match changes.recv_timeout(left) {
+            Ok(Change::Added(d)) if d.name.eq_ignore_ascii_case(&name) => break d,
+            Ok(_) => {}
+            Err(e) => panic!("our device was not discovered: {e}"),
+        }
+    };
+    let listed = discovery.devices();
+    let stopped = host.stop(Duration::from_secs(5));
+    assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
+    assert_eq!(ours.arc, SocketAddrV4::new(ip, dante_stack::arc::PORT));
+    assert_eq!(
+        ours.txt.get("arcp_vers").map(String::as_str),
+        Some("2.7.41")
+    );
+    assert!(
+        ours.txt.contains_key("mf") && ours.txt.contains_key("model"),
+        "{ours:?}"
+    );
+    assert!(listed.iter().any(|d| d.name == ours.name), "{listed:?}");
+    // The stop sends the goodbyes: our device leaves the list.
+    let removed = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match changes.recv_timeout(left) {
+            Ok(Change::Removed(n)) if n.eq_ignore_ascii_case(&name) => break n,
+            Ok(_) => {}
+            Err(e) => panic!("our device's withdrawal was not seen: {e}"),
+        }
+    };
+    assert_eq!(removed, ours.name);
+    assert!(!discovery.devices().iter().any(|d| d.name == ours.name));
+    discovery.stop().expect("discovery stopped");
+}
