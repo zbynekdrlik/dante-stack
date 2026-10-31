@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.13 (2026-10-31)
+
+- Linux: at start the device reads the Dante NIC's root qdisc (`tc -j qdisc show`) and warns unless it is `noqueue` or lockless `pfifo_fast`. On the gen3 box, fq_codel held our packets behind a preempted low-priority sender: the IEM card read peak 812 µs and late packets at 250 µs while our counters were clean; with `noqueue`, peak 229 µs and none late (iemmixer, dstack #1).
+- New `docs/linux-box.md`: what a Linux box needs for low latency (real-time priority, no deep idle states, `noqueue`, RX apart from TX, a small margin), each with how to check it.
+
 ## 0.4.12 (2026-10-31)
 
 - New `rx_cpu`: the CPU the RX thread runs on (`io_cpu` when left out, as before; `io_cpu` stays the TX thread's). On the gen3 box a received flood on the TX core delayed sends by up to 247 µs; iemmixer can now put RX on the core the NIC's interrupts land on (dstack #1).

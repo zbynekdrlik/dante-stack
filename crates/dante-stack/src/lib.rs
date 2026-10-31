@@ -101,6 +101,7 @@ pub mod health;
 pub mod host;
 pub mod info;
 pub mod media;
+pub mod qdisc;
 pub mod stream;
 pub mod subscribe;
 #[cfg(test)]
