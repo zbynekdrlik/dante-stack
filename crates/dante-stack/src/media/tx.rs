@@ -109,8 +109,11 @@ pub fn late_bin(ns: u64) -> usize {
 /// holds the thread).
 pub const KEEPALIVE_DRAIN: usize = 64;
 /// The TX thread's `SCHED_FIFO` priority when `RLIMIT_RTPRIO` allows it:
-/// below dantesync's 50, so the box's clock is never delayed by our sends.
-pub const TX_PRIORITY: i32 = 45;
+/// below dantesync's 50, so the box's clock is never delayed by our sends,
+/// and above the RX thread's, so a received flood on a shared core never
+/// holds a send (gen3 at 250 µs, 31.10.2026: 168 k packets/s received at
+/// one priority delayed sends by up to 247 µs).
+pub const TX_PRIORITY: i32 = 47;
 /// The tries of a seqlocked read before it keeps the last copy.
 const READ_TRIES: usize = 16;
 
