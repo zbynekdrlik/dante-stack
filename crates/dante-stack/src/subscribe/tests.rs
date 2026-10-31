@@ -1327,3 +1327,29 @@ fn a_changed_record_gives_up_a_flow_still_asked_for() {
         }]
     );
 }
+
+#[test]
+fn a_changed_record_gives_up_its_own_flow_whatever_other_flows_carry() {
+    let net = peer_network();
+    net.add(
+        "mic",
+        "Vox",
+        Advertised {
+            latency_ns: 0,
+            ..mic(1)
+        },
+    );
+    let mut m = manager();
+    m.set(0, Some(sub("Vox", "mic")));
+    m.set(1, Some(sub("TX 1", "peer-device")));
+    let r = requests(&m.tick(0, &NONE, &net));
+    assert_eq!(r.len(), 2, "one flow each");
+    let mic_flow = r.iter().find(|(_, to, _)| *to.ip() == MIC_IP).unwrap().0;
+    let peer_flow = r.iter().find(|(_, to, _)| *to.ip() == PEER_IP).unwrap().0;
+    m.answered(peer_flow, Answer::Granted(handle(0, 1)), MS);
+    net.add("mic", "Vox", advertised_mic());
+    m.tick(100 * MS, &[1; MAX_FLOWS], &net);
+    assert_eq!(m.flow(mic_flow.slot), None, "the mic's flow is given up");
+    assert!(m.flow(peer_flow.slot).is_some(), "the other flow stays");
+    assert!(m.rx_route(1).is_some());
+}
