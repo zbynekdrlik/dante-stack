@@ -395,3 +395,34 @@ fn only_a_running_resolver_keeps_a_young_name_from_arc() {
     t.store(S + GRACE_NS, Ordering::Relaxed);
     assert!(!i.young(DEVICE, CHANNEL), "past its grace");
 }
+
+#[test]
+fn the_thread_spaces_its_queries() {
+    // A wireless mic receiver answered none of a burst of 29 queries.
+    let responder = UdpSocket::bind("127.0.0.1:0").unwrap();
+    responder
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let to = match responder.local_addr().unwrap() {
+        std::net::SocketAddr::V4(a) => a,
+        other => panic!("{other}"),
+    };
+    let mut i = Instances::new();
+    for ch in ["a", "b", "c"] {
+        i.lookup(DEVICE, ch);
+    }
+    i.start_to(Ipv4Addr::LOCALHOST, to).unwrap();
+    let mut buf = [0u8; 1500];
+    let mut at = Vec::new();
+    for _ in 0..3 {
+        responder.recv_from(&mut buf).expect("a query");
+        at.push(Instant::now());
+    }
+    for w in at.windows(2) {
+        assert!(
+            w[1].duration_since(w[0]) >= Duration::from_millis(18),
+            "{:?}",
+            w[1].duration_since(w[0])
+        );
+    }
+}
