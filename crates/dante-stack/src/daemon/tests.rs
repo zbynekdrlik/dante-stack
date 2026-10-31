@@ -881,7 +881,7 @@ async fn loopback() -> Loopback {
     let sockets = Sockets {
         arc: bind().await.unwrap(),
         cmc: bind().await.unwrap(),
-        info: bind().await.unwrap(),
+        info: Some(bind().await.unwrap()),
         flows: bind().await.unwrap(),
     };
     let (info_rx, beat_rx) = (bind().await.unwrap(), bind().await.unwrap());
@@ -893,7 +893,7 @@ async fn loopback() -> Loopback {
     Loopback {
         arc: sockets.arc.local_addr().unwrap(),
         cmc: sockets.cmc.local_addr().unwrap(),
-        info: sockets.info.local_addr().unwrap(),
+        info: sockets.info.as_ref().unwrap().local_addr().unwrap(),
         flows: sockets.flows.local_addr().unwrap(),
         sockets,
         info_rx,

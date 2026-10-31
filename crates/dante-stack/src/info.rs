@@ -659,12 +659,32 @@ impl Multicast {
 /// goes on.
 pub async fn serve_info(
     sock: UdpSocket,
+    mc: Multicaster,
+    to: Multicast,
+    beat: Arc<dyn Beat>,
+    changes: Arc<Changes>,
+    requests: Arc<Requests>,
+) -> io::Result<()> {
+    serve_info_with(sock, None, mc, to, beat, changes, requests).await
+}
+
+/// [`serve_info`] as the address's manager ([`share`]): with `share` (the
+/// loopback socket on [`share::share_port`]), every member's registration
+/// is kept, every request received is relayed to each live member, and
+/// each live member's packets are sent from `sock`.
+pub async fn serve_info_with(
+    sock: UdpSocket,
+    share: Option<UdpSocket>,
     mut mc: Multicaster,
     to: Multicast,
     beat: Arc<dyn Beat>,
     changes: Arc<Changes>,
     requests: Arc<Requests>,
 ) -> io::Result<()> {
+    let base = Instant::now();
+    let now_ns = || u64::try_from(base.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    let mut members = share::Members::default();
+    let mut sbuf = vec![0u8; RECV_BUFFER];
     send(&sock, &mc.board_info(), to.info).await;
     send(&sock, &mc.product_info(), to.info).await;
     let mut every = tokio::time::interval(to.every);
@@ -680,6 +700,32 @@ pub async fn serve_info(
                 requests.received(REQUEST_PORT, peer.ip(), info_op(&buf[..n]));
                 if let Some(packet) = mc.answer_within(&mut bound, Instant::now(), &buf[..n]) {
                     send(&sock, &packet, to.info).await;
+                }
+                if let Some(share) = &share {
+                    let relay = share::Msg::Request(buf[..n].to_vec()).encode();
+                    for member in members.live(now_ns()) {
+                        if let Err(e) = share.send_to(&relay, member).await {
+                            debug!(error = %e, "an info request not relayed to a member");
+                        }
+                    }
+                }
+            }
+            got = recv_share(share.as_ref(), &mut sbuf) => {
+                let (n, from) = got?;
+                match share::Msg::decode(&sbuf[..n]) {
+                    Some(share::Msg::Register(id)) => {
+                        if members.register(from, id, now_ns()) {
+                            debug!("an info member's lease renewed");
+                        }
+                    }
+                    Some(share::Msg::Send(dest, packet)) if members.is_live(&from, now_ns()) => {
+                        let to = match dest {
+                            share::Dest::Info => to.info,
+                            share::Dest::Heartbeat => to.heartbeat,
+                        };
+                        send(&sock, &packet, to).await;
+                    }
+                    _ => debug!("a loopback datagram that is no member's: dropped"),
                 }
             }
             _ = every.tick() => {
@@ -707,11 +753,146 @@ pub async fn serve_info(
     }
 }
 
+/// A datagram on the share socket, or never without one.
+async fn recv_share(
+    share: Option<&UdpSocket>,
+    buf: &mut [u8],
+) -> io::Result<(usize, std::net::SocketAddr)> {
+    match share {
+        Some(s) => s.recv_from(buf).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// A member of the address's info port ([`share`]) on `sock` (a loopback
+/// socket): registers with the manager at `manager` every
+/// [`share::LEASE_EVERY`], answers each relayed request with `mc`'s identity
+/// (within the bound), and hands its replies, board and product info,
+/// notifications and heartbeats to the manager. Every [`share::LEASE_EVERY`]
+/// it tries to bind `own_at` (`<ip>`:[`REQUEST_PORT`]): when the manager has
+/// ended, it returns that socket, and the caller serves as the manager.
+#[allow(clippy::too_many_arguments)]
+pub async fn serve_member(
+    sock: UdpSocket,
+    manager: std::net::SocketAddr,
+    own_at: SocketAddrV4,
+    mut mc: Multicaster,
+    to: Multicast,
+    beat: Arc<dyn Beat>,
+    changes: Arc<Changes>,
+    requests: Arc<Requests>,
+) -> io::Result<(UdpSocket, Multicaster)> {
+    let id = share::Msg::Register(mc.id.device_id).encode();
+    let hand = |dest, packet: Vec<u8>| share::Msg::Send(dest, packet).encode();
+    sock.send_to(&id, manager).await?;
+    sock.send_to(&hand(share::Dest::Info, mc.board_info()), manager)
+        .await?;
+    sock.send_to(&hand(share::Dest::Info, mc.product_info()), manager)
+        .await?;
+    let mut lease = tokio::time::interval(share::LEASE_EVERY);
+    lease.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut every = tokio::time::interval(to.every);
+    every.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut check = tokio::time::interval(limit::CHECK);
+    check.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut bound = Limit::default();
+    let mut buf = vec![0u8; RECV_BUFFER];
+    loop {
+        let out = tokio::select! {
+            got = sock.recv_from(&mut buf) => {
+                let (n, from) = got?;
+                match share::Msg::decode(&buf[..n]) {
+                    Some(share::Msg::Request(d)) if from == manager => {
+                        requests.received(REQUEST_PORT, from.ip(), info_op(&d));
+                        mc.answer_within(&mut bound, Instant::now(), &d).map(|p| hand(share::Dest::Info, p))
+                    }
+                    _ => None,
+                }
+            }
+            _ = lease.tick() => {
+                if let Ok(own) = UdpSocket::bind(own_at).await {
+                    info!("the info port is free: this device is the address's manager now");
+                    return Ok((own, mc));
+                }
+                Some(id.clone())
+            }
+            _ = every.tick() => {
+                let records = beat.records();
+                Some(hand(share::Dest::Heartbeat, mc.heartbeat(records.as_ref())))
+            }
+            () = changes.added() => {
+                mc.notify_within(&mut bound, Instant::now(), &changes).map(|p| hand(share::Dest::Info, p))
+            }
+            _ = check.tick() => {
+                mc.notify_within(&mut bound, Instant::now(), &changes).map(|p| hand(share::Dest::Info, p))
+            }
+        };
+        if let Some(out) = out
+            && let Err(e) = sock.send_to(&out, manager).await
+        {
+            debug!(error = %e, "a packet not handed to the info manager");
+        }
+    }
+}
+
+/// The info port of the device at `ip`, shared with the other devices on
+/// that address ([`share`]): with `own` (`<ip>`:[`REQUEST_PORT`] bound) it
+/// serves as the manager, with the loopback share socket when it binds;
+/// without it as a member until the port frees, then as the manager.
+pub async fn serve_shared(
+    ip: Ipv4Addr,
+    own: Option<UdpSocket>,
+    mut mc: Multicaster,
+    to: Multicast,
+    beat: Arc<dyn Beat>,
+    changes: Arc<Changes>,
+    requests: Arc<Requests>,
+) -> io::Result<()> {
+    let port = share::share_port(ip);
+    let own = match own {
+        Some(own) => own,
+        None => {
+            info!(
+                port,
+                "the info port is held: this device is a member of the address's manager"
+            );
+            let member = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+            let manager = std::net::SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+            let (own, back) = serve_member(
+                member,
+                manager,
+                SocketAddrV4::new(ip, REQUEST_PORT),
+                mc,
+                to,
+                Arc::clone(&beat),
+                Arc::clone(&changes),
+                Arc::clone(&requests),
+            )
+            .await?;
+            mc = back;
+            own
+        }
+    };
+    if let Err(e) = socket2::SockRef::from(&own).set_multicast_if_v4(&ip) {
+        warn!(error = %e, "the info port's multicast interface not named");
+    }
+    let share = match UdpSocket::bind((Ipv4Addr::LOCALHOST, port)).await {
+        Ok(s) => Some(s),
+        Err(e) => {
+            warn!(error = %e, port, "the info manager's loopback port: no members can join");
+            None
+        }
+    };
+    serve_info_with(own, share, mc, to, beat, changes, requests).await
+}
+
 async fn send(sock: &UdpSocket, packet: &[u8], to: SocketAddrV4) {
     if let Err(e) = sock.send_to(packet, to).await {
         warn!(error = %e, port = to.port(), "an info packet could not be sent");
     }
 }
+
+pub mod share;
 
 #[cfg(test)]
 mod tests;

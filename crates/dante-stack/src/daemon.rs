@@ -580,7 +580,10 @@ pub fn announce_device<R: Registry>(
 pub struct Sockets {
     pub arc: UdpSocket,
     pub cmc: UdpSocket,
-    pub info: UdpSocket,
+    /// The info port, or `None` when another device of ours on the address
+    /// holds it (this device is then a member of that one's,
+    /// `info::share`).
+    pub info: Option<UdpSocket>,
     pub flows: UdpSocket,
 }
 
@@ -656,7 +659,8 @@ pub async fn serve<R: Registry + Browse>(
         Arc::clone(&requests),
     );
     let cmc = cmc::serve_cmc(sockets.cmc, ip, identity.process, Arc::clone(&requests));
-    let info = info::serve_info(
+    let info = info::serve_shared(
+        ip,
         sockets.info,
         Multicaster::new(identity),
         multicast,

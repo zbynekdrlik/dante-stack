@@ -311,3 +311,11 @@ fn wait_is_the_device_thread_s_own_end() {
         Err(HostError::Run(PANICKED.into()))
     );
 }
+
+#[test]
+fn only_a_held_info_port_makes_a_member() {
+    use std::io::{Error, ErrorKind};
+    assert!(info_port_held(&Error::from(ErrorKind::AddrInUse)));
+    assert!(!info_port_held(&Error::from(ErrorKind::PermissionDenied)));
+    assert!(!info_port_held(&Error::from(ErrorKind::AddrNotAvailable)));
+}

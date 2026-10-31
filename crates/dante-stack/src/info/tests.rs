@@ -1037,3 +1037,100 @@ async fn the_heartbeat_repeats_at_its_period() {
     }
     task.abort();
 }
+
+/// The device id in an info packet's header (after start, length,
+/// sequence and process id).
+fn id_of(packet: &[u8]) -> [u8; 8] {
+    packet[8..16].try_into().unwrap()
+}
+
+#[tokio::test]
+async fn a_member_s_packets_leave_through_the_manager_and_it_takes_over_when_the_manager_ends() {
+    // Two devices on one address (dstack #1, the per-PC manager): A holds
+    // the info port, B is a member.
+    let (at, info_rx, beat_rx, to, sock) = loopback(NEVER).await;
+    let share = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let manager_at = share.local_addr().unwrap();
+    let a = identity();
+    let mut b_cfg = cfg();
+    b_cfg.process_id = 1;
+    let b = Identity::new(&b_cfg, net());
+    assert_ne!(a.device_id, b.device_id);
+    let manager = tokio::spawn(serve_info_with(
+        sock,
+        Some(share),
+        Multicaster::new(a.clone()),
+        to,
+        Arc::new(NoClock),
+        Arc::new(Changes::default()),
+        Arc::new(Requests::default()),
+    ));
+    // The manager's own start: board, product, heartbeat.
+    assert_eq!(id_of(&recv(&info_rx).await), a.device_id);
+    assert_eq!(id_of(&recv(&info_rx).await), a.device_id);
+    assert_eq!(id_of(&recv(&beat_rx).await), a.device_id);
+    let member_sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let held = v4(at);
+    let member = tokio::spawn(serve_member(
+        member_sock,
+        manager_at,
+        held,
+        Multicaster::new(b.clone()),
+        to,
+        Arc::new(NoClock),
+        Arc::new(Changes::default()),
+        Arc::new(Requests::default()),
+    ));
+    // The member's start goes out through the manager.
+    assert_eq!(id_of(&recv(&info_rx).await), b.device_id, "B's board info");
+    assert_eq!(
+        id_of(&recv(&info_rx).await),
+        b.device_id,
+        "B's product info"
+    );
+    assert_eq!(id_of(&recv(&beat_rx).await), b.device_id, "B's heartbeat");
+    // A board-info request to the address: answered for A and for B.
+    let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    peer.send_to(&captured(), at).await.unwrap();
+    let mut ids = vec![id_of(&recv(&info_rx).await), id_of(&recv(&info_rx).await)];
+    ids.sort();
+    let mut want = vec![a.device_id, b.device_id];
+    want.sort();
+    assert_eq!(ids, want, "one reply per device");
+    // The manager ends: its port frees, and the member takes it within a
+    // lease.
+    manager.abort();
+    let _ = manager.await;
+    let (own, mc) = tokio::time::timeout(Duration::from_secs(5), member)
+        .await
+        .expect("the member took over")
+        .unwrap()
+        .unwrap();
+    assert_eq!(own.local_addr().unwrap(), at);
+    assert_eq!(mc.id.device_id, b.device_id);
+}
+
+#[tokio::test]
+async fn a_send_from_an_unregistered_sender_is_dropped() {
+    let (_at, info_rx, _beat_rx, to, sock) = loopback(NEVER).await;
+    let share = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let manager_at = share.local_addr().unwrap();
+    let manager = tokio::spawn(serve_info_with(
+        sock,
+        Some(share),
+        Multicaster::new(identity()),
+        to,
+        Arc::new(NoClock),
+        Arc::new(Changes::default()),
+        Arc::new(Requests::default()),
+    ));
+    recv(&info_rx).await;
+    recv(&info_rx).await;
+    let stranger = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let forged = share::Msg::Send(share::Dest::Info, vec![1, 2, 3]).encode();
+    stranger.send_to(&forged, manager_at).await.unwrap();
+    let mut buf = [0u8; 64];
+    let got = tokio::time::timeout(Duration::from_millis(200), info_rx.recv_from(&mut buf)).await;
+    assert!(got.is_err(), "nothing sent for a stranger");
+    manager.abort();
+}

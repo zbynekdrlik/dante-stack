@@ -520,3 +520,69 @@ fn a_direct_instance_query_reads_our_running_device_s_channel_record() {
     );
     assert_eq!(found.latency_ns, 10_000_000, "the test config's latency");
 }
+
+#[test]
+fn two_devices_share_one_address_each_on_its_own_ports() {
+    use dante_stack::arc::client::{REPLY_TIMEOUT, Udp};
+    use dante_stack::arc::control;
+    use dante_stack::discover::{Change, Discovery};
+    use std::net::SocketAddrV4;
+    use std::sync::atomic::AtomicU16;
+
+    let _one = ONE_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+    let ip = routed_ipv4();
+    let (dir_a, dir_b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let config_a = config_in(dir_a.path(), false);
+    // B: another name, its own ports and process id.
+    let config_b = config_in(dir_b.path(), false);
+    let text = std::fs::read_to_string(&config_b)
+        .unwrap()
+        .replace("name = \"test-device\"", "name = \"test-device-b\"")
+        + "\narc_port = 4441\ncmc_port = 8801\nflows_port = 4456\nprocess_id = 1\n";
+    std::fs::write(&config_b, text).unwrap();
+    let start = |config: PathBuf, dir: &Path| {
+        let opts = Options {
+            config,
+            place: Place::Ip(ip),
+            control: dir.join("control.sock"),
+        };
+        let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("set up");
+        let name = prepared.config().name.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        (
+            prepared.start(Signals::Report(stop)).expect("started"),
+            name,
+        )
+    };
+    let (host_a, name_a) = start(config_a, dir_a.path());
+    let (host_b, name_b) = start(config_b, dir_b.path());
+    let seq = AtomicU16::new(1);
+    let requests = dante_stack::ctl::Requests::default();
+    let halt = AtomicBool::new(false);
+    let name_on = |port| {
+        let to = SocketAddrV4::new(ip, port);
+        let mut udp = Udp::open(ip, to, &seq, REPLY_TIMEOUT, &requests, &halt).unwrap();
+        control::device_name(&mut udp)
+    };
+    let (on_a, on_b) = (name_on(4440), name_on(4441));
+    // Both are discovered, each with its own ARC port.
+    let (discovery, changes) = Discovery::start(ip).expect("discovery");
+    let deadline = Instant::now() + BOUND;
+    let mut seen = std::collections::BTreeMap::new();
+    while seen.len() < 2 && Instant::now() < deadline {
+        if let Ok(Change::Added(d)) = changes.recv_timeout(Duration::from_millis(200))
+            && (d.name == name_a || d.name == name_b)
+        {
+            seen.insert(d.name.clone(), d.arc.port());
+        }
+    }
+    let _ = discovery.stop();
+    let stopped_b = host_b.stop(Duration::from_secs(5));
+    let stopped_a = host_a.stop(Duration::from_secs(5));
+    assert_eq!(on_a.expect("A's ARC"), name_a);
+    assert_eq!(on_b.expect("B's ARC"), name_b);
+    assert_eq!(seen.get(&name_a), Some(&4440), "{seen:?}");
+    assert_eq!(seen.get(&name_b), Some(&4441), "{seen:?}");
+    assert!(matches!(stopped_a, host::Stopped::Done), "{stopped_a:?}");
+    assert!(matches!(stopped_b, host::Stopped::Done), "{stopped_b:?}");
+}

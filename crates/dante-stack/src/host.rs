@@ -275,12 +275,36 @@ fn bind_sockets(
                 .map_err(|e| run_failed(format!("{what} on UDP {port}: {e}")))?;
             Ok::<_, HostError>(sock)
         };
-        let info = bind(info::REQUEST_PORT, "the info server").await?;
-        // Bound to the address, as inferno's; the multicasts' interface is
-        // named too (Windows may not route them by the bound address).
-        socket2::SockRef::from(&info)
-            .set_multicast_if_v4(&ip)
-            .map_err(|e| run_failed(format!("the info server's multicast interface: {e}")))?;
+        // The info port is one per address: held by another device of ours
+        // on it, this device is a member of that one's (`info::share`).
+        let info = match UdpSocket::bind((ip, info::REQUEST_PORT)).await {
+            Ok(sock) => {
+                crate::winsock::no_connreset(&sock)
+                    .map_err(|e| run_failed(format!("the info server: {e}")))?;
+                // Bound to the address, as inferno's; the multicasts'
+                // interface is named too (Windows may not route them by the
+                // bound address).
+                socket2::SockRef::from(&sock)
+                    .set_multicast_if_v4(&ip)
+                    .map_err(|e| {
+                        run_failed(format!("the info server's multicast interface: {e}"))
+                    })?;
+                Some(sock)
+            }
+            Err(e) => {
+                if !info_port_held(&e) {
+                    return Err(run_failed(format!(
+                        "the info server on UDP {}: {e}",
+                        info::REQUEST_PORT
+                    )));
+                }
+                info!(
+                    port = info::REQUEST_PORT,
+                    "the info port is held on this address: a member of its manager"
+                );
+                None
+            }
+        };
         Ok(Sockets {
             arc: bind(arc_port, "ARC").await?,
             cmc: bind(cmc_port, "CMC").await?,
@@ -288,6 +312,12 @@ fn bind_sockets(
             flows: bind(flows_port, "flow control").await?,
         })
     })
+}
+
+/// Whether binding the info port failed because another socket holds it on
+/// the address (another device of ours: this one joins it as a member).
+pub fn info_port_held(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::AddrInUse
 }
 
 /// The device set up and bound, nothing served yet (see the module).
