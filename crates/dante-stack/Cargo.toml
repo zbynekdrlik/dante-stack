@@ -50,7 +50,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [target.'cfg(windows)'.dependencies]
-# dante-asio (plan Task 2): the precise system time and a high-resolution
+# dasio (plan Task 2): the precise system time and a high-resolution
 # waitable timer (the media clock), MMCSS and thread affinity (the media
 # threads), the NIC's MAC and speed (the network info), SIO_UDP_CONNRESET.
 windows-sys = { version = "0.61", features = [

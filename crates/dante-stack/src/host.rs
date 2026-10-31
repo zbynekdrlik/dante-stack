@@ -5,7 +5,7 @@
 //! `docs/superpowers/plans/2026-10-26-gen3-phase-c-engine-on-linux.md`
 //! Task 2): what `iem-dante-dev` ran in its `main`, so the engine can host
 //! the device in its own process (Task 3) and the standalone binary stays a
-//! thin caller. Linux and Windows (dante-asio plan Task 2: on Windows no
+//! thin caller. Linux and Windows (dasio plan Task 2: on Windows no
 //! control socket, a console Ctrl+C for the signals, the NIC's facts from
 //! `GetAdaptersAddresses`).
 //!

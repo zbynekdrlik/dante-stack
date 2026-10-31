@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Windows' UDP "connection reset" (dante-asio plan Task 2). After a
+//! Windows' UDP "connection reset" (dasio plan Task 2). After a
 //! datagram to a closed port draws an ICMP port-unreachable, Windows fails
 //! the socket's next `recv_from` with `WSAECONNRESET`; the device's servers
 //! end on a receive error, so one closed peer port would end the device.

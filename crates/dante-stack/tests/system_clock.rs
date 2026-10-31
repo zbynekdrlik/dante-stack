@@ -1,4 +1,4 @@
-//! A whole device on the test-only system clock (dante-asio's CI E2E: a
+//! A whole device on the test-only system clock (dasio's CI E2E: a
 //! GitHub-hosted runner has no dantesync and no PTP network). The real
 //! host is prepared on the box's IPv4 address on its default route (the
 //! production checks stay: no loopback, a real MAC) with

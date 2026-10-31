@@ -20,7 +20,7 @@ const UNIX_EPOCH_FT: i64 = 116_444_736_000_000_000;
 /// Waits up to this long are spun (yielding), never slept: on the FOH PC
 /// the media threads, alone on their CPUs at priority 31, still woke past
 /// 2.7 ms now and then while the CPUs themselves were never held over
-/// 0.2 ms (`dante-asio jitter`): the waitable timer's late wakes. Longer
+/// 0.2 ms (`dasio jitter`): the waitable timer's late wakes. Longer
 /// waits (the clock not ready) sleep on the timer, the last 50 ms spun.
 const SPIN_NS: i64 = 50_000_000;
 

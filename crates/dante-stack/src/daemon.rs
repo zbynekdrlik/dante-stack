@@ -62,7 +62,7 @@ use media::{Driver, Media, THREADS_WAIT};
 
 /// The stack's own binary's name (`dante-stack-dev`).
 pub const NAME: &str = "dante-stack-dev";
-/// dante-stack's version (`[workspace.package].version`).
+/// dstack's version (`[workspace.package].version`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The commit CI built this crate from (`GITHUB_SHA`), "local" outside CI.
 /// An application names its own build in its [`Build`]: a cached git
@@ -91,7 +91,7 @@ pub struct Build {
 }
 
 impl Build {
-    /// dante-stack's own binary.
+    /// dstack's own binary.
     pub const OWN: Build = Build {
         name: NAME,
         version: VERSION,

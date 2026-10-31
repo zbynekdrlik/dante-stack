@@ -1,5 +1,5 @@
 //! The callback contract between a stream and its processor ([`Process`],
-//! [`Block`], [`StreamStats`]) and the stream histograms. dante-stack's
+//! [`Block`], [`StreamStats`]) and the stream histograms. dstack's
 //! pump drives a [`Process`]; an application implements it. Taken from
 //! iemmixer's `iem-audio-io`, which re-exports these items from here; its
 //! audio backends stay in iemmixer.
