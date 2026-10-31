@@ -41,6 +41,7 @@ use std::sync::{Mutex, PoisonError};
 
 use tracing::{debug, info};
 
+use crate::clock::to_samples;
 use crate::daemon::media::Media;
 use crate::media::check::{CounterCheck, CounterStats, SineCheck, SineStats};
 use crate::media::ring::{Counters, Ring, SLOTS};
@@ -724,8 +725,21 @@ fn tx_part(j: &mut Json, media: &Media) {
     j.close(']');
 }
 
-/// An RX flow as the status shows it: granted, fpp, channel slots, latency.
-type RxFlow = (bool, u16, usize, u32);
+/// An RX flow as the status shows it.
+#[derive(Default)]
+struct RxFlow {
+    granted: bool,
+    fpp: u16,
+    channels: usize,
+    /// The negotiated latency (its transmitter's or ours), samples.
+    latency: u64,
+    /// The playout point: the latency, at least the fpp (`RxPlan::latency`).
+    playout: u32,
+    /// Read this much later than the device latency.
+    delay: u16,
+    /// A packet counts late past this lateness (playout + block).
+    late_after: u64,
+}
 
 fn rx_part(j: &mut Json, media: &Media) {
     let rings = media.rx.rings();
@@ -735,12 +749,16 @@ fn rx_part(j: &mut Json, media: &Media) {
             (0..MAX_FLOWS)
                 .map(|s| {
                     m.flow(s).map(|f| {
-                        (
-                            f.handle.is_some(),
-                            f.fpp,
-                            f.channels.len(),
-                            m.rx_plan(s).latency,
-                        )
+                        let plan = m.rx_plan(s);
+                        RxFlow {
+                            granted: f.handle.is_some(),
+                            fpp: f.fpp,
+                            channels: f.channels.len(),
+                            latency: to_samples(f.latency_ns, media.tx.cfg.sample_rate),
+                            playout: plan.latency,
+                            delay: plan.delay,
+                            late_after: u64::from(plan.latency) + u64::from(plan.block),
+                        }
                     })
                 })
                 .collect(),
@@ -753,13 +771,16 @@ fn rx_part(j: &mut Json, media: &Media) {
         if flow.is_none() && lane == RxCounts::default() {
             continue;
         }
-        let (granted, fpp, channels, latency) = flow.unwrap_or((false, 0, 0, 0));
+        let f = flow.unwrap_or_default();
         j.open(None, '{');
         j.num("flow", slot + 1);
-        j.flag("granted", granted);
-        j.num("fpp", fpp);
-        j.num("channels", channels);
-        j.num("latency", latency);
+        j.flag("granted", f.granted);
+        j.num("fpp", f.fpp);
+        j.num("channels", f.channels);
+        j.num("latency", f.latency);
+        j.num("playout", f.playout);
+        j.num("delay", f.delay);
+        j.num("late_after", f.late_after);
         j.num("packets", lane.packets);
         j.num("refused", lane.refused);
         j.num("stray", lane.stray);

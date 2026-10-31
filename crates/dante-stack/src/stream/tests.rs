@@ -1159,3 +1159,60 @@ fn the_pump_thread_follows_the_media_clock_paces_itself_while_it_is_not_ready_an
     thread.join().unwrap();
     assert!(!stats.stream_stats().running);
 }
+
+#[test]
+fn a_delayed_flow_s_channel_is_read_its_delay_later_and_the_others_are_not() {
+    // Per-flow playout (dstack #1): RX 1's flow is played out 8 samples
+    // after the device latency (a mic at fpp 32), RX 4 stays at it.
+    let mut r = rig(
+        Map {
+            rx: vec![0, 3],
+            tx: vec![1, 4],
+        },
+        &[0, 3],
+        &[1, 4],
+    );
+    let delayed = RxPlan {
+        delay: 8,
+        ..RxPlan::default()
+    };
+    r.rx.publish(
+        |flow| {
+            if flow == 1 {
+                delayed
+            } else {
+                RxPlan::default()
+            }
+        },
+        |c| match c {
+            0 => Some(RxRoute { flow: 1, slot: 0 }),
+            3 => Some(RxRoute { flow: 0, slot: 0 }),
+            _ => None,
+        },
+    );
+    assert_eq!((r.rx.delay(0), r.rx.delay(3), r.rx.delay(1)), (8, 0, 0));
+    fill(&r, 0, T - 1_000, 4_000, counter);
+    fill(&r, 3, T - 1_000, 4_000, counter);
+    let first = Blocks::bootstrap(T, TIMING).start();
+    run_to(&mut r, T, T + 960, 0);
+    let n = (r.stats.view().blocks * B) as usize;
+    assert!(n >= 900, "{n}");
+    let (out, holes) = engine_at(&r, 1, first + D, n);
+    assert_eq!(holes, 0);
+    for (i, &v) in out.iter().enumerate() {
+        let t = first + i as u64;
+        assert_eq!(
+            v,
+            counter(t - 8),
+            "TX 2 at block stamp {t} is RX 1 8 samples earlier"
+        );
+    }
+    let (out, holes) = engine_at(&r, 4, first + D, n);
+    assert_eq!(holes, 0);
+    assert!(
+        out.iter()
+            .enumerate()
+            .all(|(i, &v)| v == counter(first + i as u64)),
+        "TX 5 is RX 4 undelayed"
+    );
+}

@@ -12,7 +12,10 @@
 //!   media now ≥ kB + B + P, P the device's latency in samples (the playout
 //!   point the RX checks already read at). Its inputs are the RX rings at
 //!   those stamps (an RX channel that is not routed to a flow is silence
-//!   and reads nothing, so it counts no hole), its outputs go into the
+//!   and reads nothing, so it counts no hole); a channel whose flow plays
+//!   out later than P (its fpp, its transmitter's latency) is read that
+//!   much earlier in stamps, [`crate::media::rx::RxShared::delay`], so only
+//!   that source is later in the mix. Its outputs go into the
 //!   engine's TX rings ([`crate::media::tx::TxShared::engine_ring`]) at
 //!   kB + D, **D = B + P + W** ([`Timing::offset`]), W the device's
 //!   `work_margin` ([`WORK_MARGIN`], 1 ms, unless the config sets it; at
@@ -484,7 +487,9 @@ impl<P: Process> Pump<P> {
         for (chan, &rx) in self.input.chunks_exact_mut(self.frames).zip(&self.map.rx) {
             match rings.get(rx).filter(|_| self.rx.routed(rx)) {
                 Some(ring) => {
-                    ring.read_at(start, &mut self.samples);
+                    // A flow that needs a later playout (its fpp, its
+                    // transmitter's latency) is read that much later.
+                    ring.read_at(start.saturating_sub(self.rx.delay(rx)), &mut self.samples);
                     for (x, &s) in chan.iter_mut().zip(self.samples.iter()) {
                         *x = to_f64(s);
                     }

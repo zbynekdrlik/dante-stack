@@ -137,7 +137,8 @@ fn a_subscription_asks_its_transmitter_for_one_flow_of_nchan_slots() {
         }
     );
     // The RX thread's view: the transmitter, 3 bytes, 4 slots, the larger
-    // latency (2 ms = 192 samples), not granted yet.
+    // latency (2 ms = 192 samples) as the playout, read 96 samples after
+    // ours (1 ms), the block of 32, not granted yet.
     assert_eq!(
         m.rx_plan(0),
         RxPlan {
@@ -145,6 +146,8 @@ fn a_subscription_asks_its_transmitter_for_one_flow_of_nchan_slots() {
             bps: 3,
             nslots: 4,
             latency: 192,
+            delay: 96,
+            block: 32,
             live: false,
             generation: 1,
         }
@@ -1154,12 +1157,33 @@ fn an_fpp_step_leaves_other_transmitters_channels_alone() {
 }
 
 #[test]
-fn a_flow_whose_fpp_reaches_the_latency_misses_its_packets() {
-    assert!(fpp_misses(32, 24));
-    assert!(
-        fpp_misses(32, 32),
-        "the first frame is fpp samples old already"
+fn a_flow_needing_a_later_playout_delays_only_its_own_channels() {
+    // iemmixer's box, 31.10.2026: device latency 24 samples (250 us at
+    // 96 kHz), the mic granted only at fpp 32. Its flow plays out at 32,
+    // 8 samples after the device latency; the stage rack's flow stays at
+    // 24 (owner: a slow source must not raise the others' latency).
+    let mut cfg = cfg();
+    cfg.latency_ns = 250_000;
+    let net = Fake::default();
+    net.add("mic", "Vox", mic(1));
+    let mut rack = adv(PEER_IP, 1);
+    rack.latency_ns = 0;
+    net.add("rack", "TX 1", rack);
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    m.set(0, Some(sub("Vox", "mic")));
+    m.set(1, Some(sub("TX 1", "rack")));
+    run_with_mic(&mut m, &net, 30, |fpp| {
+        if fpp < 32 {
+            Answer::Refused(0x0314)
+        } else {
+            Answer::Granted([0, 0, 0, 9, 0, 9])
+        }
+    });
+    let mic_plan = m.rx_plan(m.rx_route(0).expect("the mic routed").flow);
+    assert_eq!(
+        (mic_plan.latency, mic_plan.delay, mic_plan.block),
+        (32, 8, 32)
     );
-    assert!(!fpp_misses(32, 33));
-    assert!(!fpp_misses(4, 96));
+    let rack_plan = m.rx_plan(m.rx_route(1).expect("the rack routed").flow);
+    assert_eq!((rack_plan.latency, rack_plan.delay), (24, 0));
 }

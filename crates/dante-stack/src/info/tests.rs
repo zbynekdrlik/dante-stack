@@ -959,6 +959,8 @@ fn the_records_come_once_the_clock_is_ready_and_each_beat_takes_its_own_second()
         bps: 3,
         nslots: 1,
         latency: 192,
+        delay: 0,
+        block: 0,
         live: true,
         generation: 1,
     };

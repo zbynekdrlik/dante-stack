@@ -201,6 +201,8 @@ fn the_rx_thread_s_passes_do_not_allocate() {
         bps: 3,
         nslots: 2,
         latency: 192,
+        delay: 0,
+        block: 0,
         live: true,
         generation: 1,
     };

@@ -22,6 +22,8 @@ fn plan(src: Ipv4Addr, nslots: u8, live: bool, generation: u32) -> RxPlan {
         bps: 3,
         nslots,
         latency: 192,
+        delay: 0,
+        block: 0,
         live,
         generation,
     }
@@ -99,7 +101,9 @@ fn a_plan_and_a_route_round_trip_through_their_words() {
             src: Some(Ipv4Addr::new(255, 255, 255, 255)),
             bps: 4,
             nslots: 1,
-            latency: u32::MAX,
+            latency: u32::from(u16::MAX),
+            delay: u16::MAX,
+            block: 511,
             live: false,
             generation: 0,
         },
@@ -107,6 +111,12 @@ fn a_plan_and_a_route_round_trip_through_their_words() {
     ] {
         assert_eq!(RxPlan::from_words(p.words()), p, "{p:?}");
     }
+    // The playout is kept in 16 bits, the block in 9.
+    let mut big = plan(Ipv4Addr::new(10, 0, 0, 11), 8, true, 7);
+    big.latency = u32::MAX;
+    big.block = 512 + 32;
+    let back = RxPlan::from_words(big.words());
+    assert_eq!((back.latency, back.block), (u32::from(u16::MAX), 32));
     assert_eq!(RxPlan::default().words(), [0, 0]);
     assert_eq!(RxPlan::from_words([u64::MAX, 0]), RxPlan::default());
     for r in [
@@ -878,4 +888,46 @@ fn the_rx_thread_receives_until_stopped() {
         std::thread::sleep(Duration::from_millis(5));
     }
     thread.join().unwrap();
+}
+
+#[test]
+fn a_routed_channel_takes_its_flow_s_delay_and_follows_its_changes() {
+    let s = shared(3);
+    let delayed = |d: u16| RxPlan {
+        delay: d,
+        ..plan(LOOPBACK, 2, true, 1)
+    };
+    let r = |flow| RxRoute { flow, slot: 0 };
+    publish(&s, &[(4, delayed(8))], &[(0, r(4)), (1, r(4))]);
+    assert_eq!(
+        (s.delay(0), s.delay(1), s.delay(2), s.delay(9)),
+        (8, 8, 0, 0)
+    );
+    publish(&s, &[(4, delayed(3))], &[(0, r(4))]);
+    assert_eq!((s.delay(0), s.delay(1)), (3, 0), "RX 2 left the flow");
+}
+
+#[test]
+fn a_packet_is_late_only_past_its_flow_s_playout_plus_the_block() {
+    // Per-flow playout: the pump reads a block B after its first frame's
+    // playout point, so the flow's read budget is playout + B.
+    let s = shared(1);
+    let mut rx = Receiver::new(Arc::clone(&s)).unwrap();
+    let mut p = plan(LOOPBACK, 1, true, 1);
+    p.latency = 32;
+    p.block = 16;
+    publish(&s, &[(0, p)], &[(0, RxRoute { flow: 0, slot: 0 })]);
+    let t = transmitter(LOOPBACK);
+    let base = 1_000_000_000u64;
+    let now = ns_of(base + 1_000, RATE);
+    // Lateness 48 (= 32 + 16): in time; 49: late.
+    for pos in [base + 1_000 - 48, base + 1_000 - 49 + 100] {
+        t.send_to(&packet_at(pos, 1, 1), slot_addr(&s, 0)).unwrap();
+    }
+    pump(&mut rx, 0, 2, Some(now), 0);
+    assert_eq!(s.lane(0).late, 0, "{:?}", s.lane(0));
+    t.send_to(&packet_at(base + 1_000 - 49, 1, 1), slot_addr(&s, 0))
+        .unwrap();
+    pump(&mut rx, 0, 1, Some(now), 0);
+    assert_eq!(s.lane(0).late, 1, "{:?}", s.lane(0));
 }
