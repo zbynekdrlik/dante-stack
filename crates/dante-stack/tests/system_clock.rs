@@ -471,3 +471,52 @@ fn control_subscribes_our_running_device_and_ends_it() {
     );
     assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
 }
+
+#[test]
+fn a_direct_instance_query_reads_our_running_device_s_channel_record() {
+    use dante_stack::subscribe::instance::Instances;
+    use dante_stack::subscribe::resolve::Resolver;
+
+    let _one = ONE_DEVICE.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let ip = routed_ipv4();
+    let opts = Options {
+        config: config_in(dir.path(), false),
+        place: Place::Ip(ip),
+        control: dir.path().join("control.sock"),
+    };
+    let prepared = host::prepare_with(&opts, &[], ClockSource::System).expect("the device set up");
+    let (name, tx1) = (
+        prepared.config().name.clone(),
+        prepared.config().tx[0].clone(),
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let host = prepared
+        .start(Signals::Report(Arc::clone(&stop)))
+        .expect("the device started");
+    let mut instances = Instances::new();
+    assert!(
+        instances.lookup(&name, &tx1).is_none(),
+        "nothing before the query"
+    );
+    instances.start(ip).expect("the query thread");
+    let deadline = Instant::now() + BOUND;
+    let found = loop {
+        if let Some(a) = instances.lookup(&name, &tx1) {
+            break a;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "our channel record was never read"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let stopped = host.stop(Duration::from_secs(5));
+    assert!(matches!(stopped, host::Stopped::Done), "{stopped:?}");
+    assert_eq!(found.control.ip(), &ip);
+    assert_eq!(
+        (found.tx_channel_id, found.rate, found.bits),
+        (1, 96_000, 24)
+    );
+    assert_eq!(found.latency_ns, 10_000_000, "the test config's latency");
+}

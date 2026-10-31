@@ -739,6 +739,10 @@ struct RxFlow {
     delay: u16,
     /// A packet counts late past this lateness (playout + block).
     late_after: u64,
+    /// The transmitter's advertised latency, samples (0: none).
+    advertised: u64,
+    /// The playout is below it (the owner's per-device override).
+    below_advertised: bool,
 }
 
 fn rx_part(j: &mut Json, media: &Media) {
@@ -758,6 +762,8 @@ fn rx_part(j: &mut Json, media: &Media) {
                             playout: plan.latency,
                             delay: plan.delay,
                             late_after: u64::from(plan.latency) + u64::from(plan.block),
+                            advertised: to_samples(f.advertised_ns, media.tx.cfg.sample_rate),
+                            below_advertised: f.below_advertised,
                         }
                     })
                 })
@@ -781,6 +787,8 @@ fn rx_part(j: &mut Json, media: &Media) {
         j.num("playout", f.playout);
         j.num("delay", f.delay);
         j.num("late_after", f.late_after);
+        j.num("advertised", f.advertised);
+        j.flag("below_advertised", f.below_advertised);
         j.num("packets", lane.packets);
         j.num("refused", lane.refused);
         j.num("stray", lane.stray);

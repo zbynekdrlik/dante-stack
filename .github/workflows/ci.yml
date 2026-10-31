@@ -106,7 +106,7 @@ jobs:
           set -euo pipefail
           targets="$(cargo +nightly-2026-09-20 fuzz list)"
           count="$(wc -w <<< "$targets")"
-          [ "$count" -eq 7 ] || { echo "::error::cargo fuzz list gave $count targets, not 7: $targets"; exit 1; }
+          [ "$count" -eq 8 ] || { echo "::error::cargo fuzz list gave $count targets, not 8: $targets"; exit 1; }
           for target in $targets; do
             echo "::group::$target"
             cargo +nightly-2026-09-20 fuzz run "$target" -- -max_total_time=30

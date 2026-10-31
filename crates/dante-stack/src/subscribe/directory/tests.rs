@@ -765,6 +765,7 @@ fn the_network_resolves_channel_records_first_and_reads_a_device_without_them() 
     let (daemon, senders) = FakeDaemon::new(&[CHAN_SERVICE, ARC_SERVICE, DBC_SERVICE]);
     let mut network = Network {
         chan: Mdns::new(),
+        instances: Instances::new(),
         // A settle the reader's clock must pass; a reader that is only
         // woken by the want (its idle wait is longer than the test).
         arc: ArcDirectory::new(Timing {

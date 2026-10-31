@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 (2026-10-31)
+
+- New: direct instance queries of channel records (`subscribe::instance`, dstack #1 problem C). A wireless mic receiver answers no browse (PTR) query for `_netaudio-chan` or `_netaudio-arc`, but does answer a query for its instance `<channel>@<device>._netaudio-chan._udp.local.` (tested from dev1's Dante NIC: no reply to PTR in any form; the instance answered within 0.1 s). The stack read it through ARC, with no latency and the config's fpp. Now, for a subscribed name whose device no browsed record names, the network resolver asks the instance directly (SRV + TXT, then the target's A if missing). It sends a legacy unicast query from a socket of its own, every 10 s while unanswered. Answers are used for 2 min and re-asked from 1 min while looked up, for at most 64 instances. The answer goes through the same channel-record parser, so the advertised latency and fpp come through. Order: browsed records, then the instance query, then ARC. DNS packets via simple-dns 0.12.0 (MIT). Logs carry counts only. A failed start of the query thread is a warning; records and ARC still resolve. Live on dev1: the mic's record read with latency_ns 1000000, fpp 32..32, nchan 2.
+- New: `playout_override` in the device config, a per-source playout in samples by TX device name (case aside), e.g. `playout_override = { "<device>" = 32 }`. Owner's rule (31.10.2026): by default an advertised latency is always honoured; going below it needs the owner's approval per device. The override never goes below the flow's fpp or our latency. Status per RX flow: new `advertised` (samples) and `below_advertised`; `FlowView` has `advertised_ns` and `below_advertised`.
+- Fuzz: a new target `instance_answer` (8 targets).
+
 ## 0.4.0 (2026-10-31)
 
 Consumer-visible: an RX channel whose flow needs a later playout is now later in the engine's mix by that much; every other channel stays at the device latency.

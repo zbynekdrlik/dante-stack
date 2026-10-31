@@ -34,6 +34,10 @@ serde = { version = "1.0", features = ["derive"] }
 # `health::parse_status` reads the control socket's status line (MIT OR
 # Apache-2.0).
 serde_json = "1.0"
+# DNS packets for the direct query of a channel record's instance (MIT):
+# a transmitter that answers no browse (PTR) query, only its instance
+# (dstack #1). 0.12.0 (26.07.2026); 0.13.0 is under two weeks old.
+simple-dns = "=0.12.0"
 # The RX flow sockets' receive buffer (SO_RCVBUF; MIT OR Apache-2.0).
 # Already in the lockfile through tokio.
 socket2 = "0.6"

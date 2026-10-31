@@ -60,6 +60,7 @@
 //! control side's ns.
 
 pub mod directory;
+pub mod instance;
 pub mod resolve;
 
 use std::collections::BTreeMap;
@@ -202,6 +203,10 @@ struct Flow {
     bits: u32,
     fpp: u16,
     latency_ns: u64,
+    /// The transmitter's device name (case aside) and its advertised
+    /// latency (0 when it advertises none).
+    device: String,
+    advertised_ns: u64,
     /// When it was asked for.
     since: u64,
     /// The transmitter's handle; `None` while asked for.
@@ -247,6 +252,11 @@ pub struct FlowView {
     pub bits: u32,
     pub fpp: u16,
     pub latency_ns: u64,
+    /// The transmitter's advertised latency (0: none).
+    pub advertised_ns: u64,
+    /// Its playout is below that, by the device config's
+    /// `playout_override` (the owner's approval).
+    pub below_advertised: bool,
 }
 
 /// Our RX subscriptions and their flows.
@@ -259,6 +269,8 @@ pub struct Manager {
     latency_ns: u64,
     /// The pump's block, samples (the device config's).
     block: u64,
+    /// The config's `playout_override`, by lower-case device name.
+    playout_override: BTreeMap<String, u32>,
     subs: Vec<Option<Subscription>>,
     routes: Vec<Option<Route>>,
     /// A channel's last request failed this way (until it is routed again
@@ -300,6 +312,11 @@ impl Manager {
             rate: cfg.sample_rate,
             latency_ns: cfg.latency_ns,
             block: cfg.block,
+            playout_override: cfg
+                .playout_override
+                .iter()
+                .map(|(d, &p)| (d.to_ascii_lowercase(), p))
+                .collect(),
             subs: vec![None; n],
             routes: vec![None; n],
             failed: vec![None; n],
@@ -500,7 +517,13 @@ impl Manager {
     /// 31.10.2026: fpp 32 played out at 31 with a block of 16, no hole).
     /// Only that flow's channels are read later; the others keep ours.
     fn playout(&self, f: &Flow) -> u64 {
-        to_samples(f.latency_ns, self.rate).max(u64::from(f.fpp))
+        let fpp = u64::from(f.fpp);
+        match self.playout_override.get(&f.device) {
+            Some(&o) => u64::from(o)
+                .max(fpp)
+                .max(to_samples(self.latency_ns, self.rate)),
+            None => to_samples(f.latency_ns, self.rate).max(fpp),
+        }
     }
 
     /// Where RX channel `rx`'s samples come from.
@@ -534,6 +557,8 @@ impl Manager {
             bits: f.bits,
             fpp: f.fpp,
             latency_ns: f.latency_ns,
+            advertised_ns: f.advertised_ns,
+            below_advertised: self.playout(f) < to_samples(f.advertised_ns, self.rate),
         })
     }
 
@@ -717,6 +742,11 @@ impl Manager {
             bits: first.bits,
             fpp,
             latency_ns,
+            device: waiting
+                .first()
+                .and_then(|(rx, _)| self.subs.get(*rx)?.as_ref())
+                .map_or_else(String::new, |s| s.tx_device.to_ascii_lowercase()),
+            advertised_ns: first.latency_ns,
             since: now,
             handle: None,
             heard: None,
