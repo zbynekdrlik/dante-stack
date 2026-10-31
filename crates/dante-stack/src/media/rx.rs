@@ -81,6 +81,21 @@ pub const RECV_BUFFER_BYTES: usize = 4 << 20;
 /// The longest the thread waits for a datagram: it reads the stop flag and
 /// new plans at least this often.
 pub const WAKE_NS: u64 = 33_000_000;
+/// The shortest time from one RX pass's start to the next on Linux, ns:
+/// datagrams that arrive meanwhile wait in their sockets and the next pass
+/// reads them together, instead of a wake per datagram (gen3 on the N100
+/// box, 31.10.2026: 7 stage flows at fpp 4 woke the thread 168 k times a
+/// second on the core it shares with TX). A datagram is read at most this
+/// much later, a fifth of the lowest latency we receive at (250 µs).
+pub const PASS_NS: u64 = 50_000;
+const _: () = assert!(PASS_NS * 5 <= 250_000, "a fifth of the lowest RX latency");
+
+/// How long to rest after a pass that began at `began` (the thread's clock,
+/// ns) when it is `now`: up to [`PASS_NS`] from the start, 0 past it.
+pub fn rest_ns(began: u64, now: u64) -> u64 {
+    began.saturating_add(PASS_NS).saturating_sub(now)
+}
+
 /// The most datagrams read from one socket in a pass (a flood never holds
 /// the thread); the rest wait for the next pass, at once.
 pub const DRAIN: usize = 64;
@@ -814,7 +829,12 @@ fn run(clock: &dyn PtpClock, shared: &RxShared, mut rx: Receiver, cpu: Option<us
         {
             std::thread::sleep(Duration::from_nanos(WAKE_NS));
         }
-        rx.pass(clock.now_ns(), shared.now_ns());
+        let began = shared.now_ns();
+        rx.pass(clock.now_ns(), began);
+        // Linux sleeps precisely; Windows' sleep is coarse (ms), so it
+        // keeps a wake per datagram.
+        #[cfg(target_os = "linux")]
+        std::thread::sleep(Duration::from_nanos(rest_ns(began, shared.now_ns())));
     }
 }
 
