@@ -65,3 +65,9 @@ path = "fuzz_targets/replies.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "instance_answer"
+path = "fuzz_targets/instance_answer.rs"
+test = false
+doc = false

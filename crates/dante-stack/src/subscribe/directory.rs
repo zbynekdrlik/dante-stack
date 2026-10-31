@@ -68,6 +68,7 @@ use std::time::{Duration, Instant};
 use mdns_sd::ServiceEvent;
 use tracing::{debug, info};
 
+use super::instance::Instances;
 use super::resolve::{Advertised, Applied, Browse, BrowseError, Mdns, Resolver, lowest_ipv4};
 use super::retry_after;
 use crate::announce::ARC_SERVICE;
@@ -780,10 +781,13 @@ impl Report {
 }
 
 /// The network's channels: `_netaudio-chan` records first; a device no
-/// channel record names is read through its ARC.
+/// browsed record names is asked for the instance's record directly (a
+/// transmitter that answers no browse query, [`super::instance`]), and read
+/// through its ARC while that has no answer.
 #[derive(Debug, Default)]
 pub struct Network {
     pub chan: Mdns,
+    pub instances: Instances,
     pub arc: ArcDirectory,
 }
 
@@ -793,7 +797,9 @@ impl Resolver for Network {
             if self.chan.names_device(tx_device) {
                 None
             } else {
-                self.arc.lookup(tx_device, tx_channel)
+                self.instances
+                    .lookup(tx_device, tx_channel)
+                    .or_else(|| self.arc.lookup(tx_device, tx_channel))
             }
         })
     }

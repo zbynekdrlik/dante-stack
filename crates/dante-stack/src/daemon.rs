@@ -56,6 +56,7 @@ use crate::flows::client::Client;
 use crate::info::{Changes, Identity, Multicast, Multicaster, NetInfo};
 use crate::subscribe::TICK;
 use crate::subscribe::directory::{self, ArcDirectory, Network};
+use crate::subscribe::instance::Instances;
 use crate::subscribe::resolve::{Browse, BrowseError, Mdns, Own};
 use crate::{arc, cmc, flows, info};
 use media::{Driver, Media, THREADS_WAIT};
@@ -589,6 +590,7 @@ pub struct Sockets {
 fn network_of(cfg: &DeviceConfig) -> Network {
     Network {
         chan: Mdns::new(),
+        instances: Instances::new(),
         arc: ArcDirectory::new(directory::Timing::of(cfg)),
     }
 }
@@ -707,6 +709,13 @@ pub async fn serve<R: Registry + Browse>(
                         break Err(e.into());
                     }
                     info!("mDNS browse of the channel records started");
+                }
+                let instances = &mut resolver.1.instances;
+                if instances.asked() && !instances.tried() {
+                    match instances.start(ip) {
+                        Ok(_) => info!("direct instance queries of channel records started"),
+                        Err(e) => warn!(%e, "direct instance queries not started: records and ARC only"),
+                    }
                 }
                 let arc = &mut resolver.1.arc;
                 if arc.asked() && !arc.started() {

@@ -177,6 +177,8 @@ fn a_subscription_asks_its_transmitter_for_one_flow_of_nchan_slots() {
             bits: 24,
             fpp: 16,
             latency_ns: 2_000_000,
+            advertised_ns: 2_000_000,
+            below_advertised: false,
         }
     );
     assert_eq!(m.flow(1), None);
@@ -761,6 +763,8 @@ fn held() -> Option<Flow> {
         bits: 24,
         fpp: 16,
         latency_ns: 1_000_000,
+        device: "held-device".to_string(),
+        advertised_ns: 1_000_000,
         since: 0,
         handle: None,
         heard: None,
@@ -1186,4 +1190,52 @@ fn a_flow_needing_a_later_playout_delays_only_its_own_channels() {
     );
     let rack_plan = m.rx_plan(m.rx_route(1).expect("the rack routed").flow);
     assert_eq!((rack_plan.latency, rack_plan.delay), (24, 0));
+}
+
+/// The mic as its channel record advertises it: 1 ms, fpp 32 only.
+fn advertised_mic() -> Advertised {
+    Advertised {
+        latency_ns: 1_000_000,
+        fpp_min: 32,
+        fpp_max: 32,
+        ..mic(1)
+    }
+}
+
+#[test]
+fn an_advertised_latency_is_honoured_and_an_override_goes_below_it_marked() {
+    let mut cfg = cfg();
+    cfg.latency_ns = 250_000;
+    let net = Fake::default();
+    net.add("Mics-01", "Vox", advertised_mic());
+    // By default the advertised 1 ms (96 samples at 96 kHz) is honoured.
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    m.set(0, Some(sub("Vox", "Mics-01")));
+    run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
+    let slot = m.rx_route(0).expect("routed").flow;
+    assert_eq!((m.rx_plan(slot).latency, m.rx_plan(slot).delay), (96, 72));
+    let v = m.flow(slot).unwrap();
+    assert_eq!((v.advertised_ns, v.below_advertised), (1_000_000, false));
+    // The owner's approval for this device: 32 samples, marked below.
+    cfg.playout_override.insert("mics-01".to_string(), 32);
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    m.set(0, Some(sub("Vox", "Mics-01")));
+    run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
+    let slot = m.rx_route(0).expect("routed").flow;
+    assert_eq!((m.rx_plan(slot).latency, m.rx_plan(slot).delay), (32, 8));
+    assert!(m.flow(slot).unwrap().below_advertised);
+    // Never below the flow's fpp, nor our own latency.
+    cfg.playout_override.insert("mics-01".to_string(), 8);
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    m.set(0, Some(sub("Vox", "Mics-01")));
+    run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
+    let slot = m.rx_route(0).expect("routed").flow;
+    assert_eq!(m.rx_plan(slot).latency, 32, "at least its fpp");
+    cfg.latency_ns = 1_000_000;
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    m.set(0, Some(sub("Vox", "Mics-01")));
+    run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
+    let slot = m.rx_route(0).expect("routed").flow;
+    assert_eq!(m.rx_plan(slot).latency, 96, "at least our latency");
+    assert!(!m.flow(slot).unwrap().below_advertised);
 }

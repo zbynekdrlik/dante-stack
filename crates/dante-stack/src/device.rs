@@ -32,7 +32,7 @@
 //! - Problems name a field and a channel number, never a name: the channel
 //!   names may be the band's labels (P6), and no log may hold one.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -126,6 +126,14 @@ pub struct DeviceConfig {
     /// when left out.
     #[serde(default)]
     pub io_cpu: Option<usize>,
+    /// A playout point below a transmitter's advertised latency, samples,
+    /// by its device name (case aside). Only with the owner's approval per
+    /// device (dstack #1, 31.10.2026: by default an advertised latency is
+    /// always honoured); the status marks such a flow `below_advertised`.
+    /// It never goes below the flow's frames per packet or our latency.
+    /// Each name a valid Dante device name, each value 1 to 65535.
+    #[serde(default)]
+    pub playout_override: BTreeMap<String, u32>,
     /// Where the state ([`DeviceState`]) is kept.
     pub state_file: PathBuf,
 }
@@ -244,6 +252,14 @@ impl DeviceConfig {
         };
         if !(least..=MAX_WORK_MARGIN).contains(&self.work_margin) {
             out.push(format!("work_margin: {least} to {MAX_WORK_MARGIN} samples"));
+        }
+        for (device, &samples) in &self.playout_override {
+            if !valid_device_name(device) || !(1..=u32::from(u16::MAX)).contains(&samples) {
+                out.push(
+                    "playout_override: a valid Dante device name and 1 to 65535 samples"
+                        .to_string(),
+                );
+            }
         }
         if self.state_file.as_os_str().is_empty() {
             out.push("state_file: empty".to_string());

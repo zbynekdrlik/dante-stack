@@ -1211,3 +1211,41 @@ fn a_fitted_state_is_logged_once_by_its_counts_only() {
     });
     assert_eq!(log, "");
 }
+
+#[test]
+fn a_per_source_playout_override_is_read_and_checked() {
+    let cfg = DeviceConfig::from_toml(&config_with(
+        "latency_ns =",
+        "latency_ns = 1000000\nplayout_override = { \"mics-01\" = 32 }",
+    ))
+    .unwrap();
+    assert_eq!(cfg.playout_override.get("mics-01"), Some(&32));
+    assert!(
+        DeviceConfig::from_toml(TEST_DEVICE)
+            .unwrap()
+            .playout_override
+            .is_empty()
+    );
+    let rule =
+        vec!["playout_override: a valid Dante device name and 1 to 65535 samples".to_string()];
+    for bad in [
+        "{ \"mics-01\" = 0 }",
+        "{ \"mics-01\" = 65536 }",
+        "{ \"no.dots\" = 32 }",
+        "{ \"-bad\" = 32 }",
+    ] {
+        assert_eq!(
+            problems(&config_with(
+                "latency_ns =",
+                &format!("latency_ns = 1000000\nplayout_override = {bad}")
+            )),
+            rule,
+            "{bad}"
+        );
+    }
+    DeviceConfig::from_toml(&config_with(
+        "latency_ns =",
+        "latency_ns = 1000000\nplayout_override = { \"mics-01\" = 65535, \"a\" = 1 }",
+    ))
+    .unwrap();
+}
