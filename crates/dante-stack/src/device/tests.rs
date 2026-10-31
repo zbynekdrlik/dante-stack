@@ -82,7 +82,12 @@ fn a_config_reads_the_test_device() {
         cfg.arc_rx_fpp, 16,
         "an ARC-resolved transmitter is asked for 16"
     );
-    assert_eq!((cfg.pump_cpu, cfg.io_cpu), (None, None), "no CPU pinned");
+    assert_eq!(
+        (cfg.pump_cpu, cfg.io_cpu, cfg.rx_cpu),
+        (None, None, None),
+        "no CPU pinned"
+    );
+    assert_eq!(cfg.rx_thread_cpu(), None);
     assert_eq!(
         cfg.state_file,
         PathBuf::from("/var/lib/iem-dante/state.toml")
@@ -437,7 +442,12 @@ fn the_threads_cpus_are_read_and_bounded() {
     );
     let cfg = DeviceConfig::from_toml(&text).unwrap();
     assert_eq!((cfg.pump_cpu, cfg.io_cpu), (Some(3), Some(2)));
-    for (line, field) in [("pump_cpu = 1024", "pump_cpu"), ("io_cpu = 1024", "io_cpu")] {
+    assert_eq!(cfg.rx_thread_cpu(), Some(2), "RX on io_cpu without rx_cpu");
+    for (line, field) in [
+        ("pump_cpu = 1024", "pump_cpu"),
+        ("io_cpu = 1024", "io_cpu"),
+        ("rx_cpu = 1024", "rx_cpu"),
+    ] {
         let found = problems(&config_with(
             "latency_ns =",
             &format!("latency_ns = 1000000\n{line}"),
@@ -1287,4 +1297,21 @@ fn the_ports_and_the_process_id_are_read_the_defaults_when_left_out() {
         (cfg.arc_port, cfg.cmc_port, cfg.flows_port, cfg.process_id),
         (4441, 8801, 4456, 2)
     );
+}
+
+#[test]
+fn the_rx_thread_takes_its_own_cpu_when_one_is_named() {
+    let cfg = DeviceConfig::from_toml(&config_with(
+        "latency_ns =",
+        "latency_ns = 1000000\nio_cpu = 2\nrx_cpu = 0",
+    ))
+    .unwrap();
+    assert_eq!((cfg.io_cpu, cfg.rx_cpu), (Some(2), Some(0)));
+    assert_eq!(cfg.rx_thread_cpu(), Some(0));
+    let alone = DeviceConfig::from_toml(&config_with(
+        "latency_ns =",
+        "latency_ns = 1000000\nrx_cpu = 1",
+    ))
+    .unwrap();
+    assert_eq!((alone.io_cpu, alone.rx_thread_cpu()), (None, Some(1)));
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.12 (2026-10-31)
+
+- New `rx_cpu`: the CPU the RX thread runs on (`io_cpu` when left out, as before; `io_cpu` stays the TX thread's). On the gen3 box a received flood on the TX core delayed sends by up to 247 µs; iemmixer can now put RX on the core the NIC's interrupts land on (dstack #1).
+
 ## 0.4.11 (2026-10-31)
 
 - Linux: the RX thread reads in passes at least 50 µs apart (from each pass's start) instead of waking per datagram: what arrives meanwhile waits in its socket and the next pass reads it. On the gen3 box, 7 stage flows at fpp 4 woke the thread 168 k times a second on the core it shares with TX. A datagram is read at most 50 µs later, a fifth of the lowest latency we receive at. Windows keeps a wake per datagram (its sleep is coarse) (dstack #1).
