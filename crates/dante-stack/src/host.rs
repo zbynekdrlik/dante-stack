@@ -292,12 +292,12 @@ fn bind_sockets(
                 Some(sock)
             }
             Err(e) => {
-                if !info_port_held(&e) {
-                    return Err(run_failed(format!(
+                member_or(e).map_err(|e| {
+                    run_failed(format!(
                         "the info server on UDP {}: {e}",
                         info::REQUEST_PORT
-                    )));
-                }
+                    ))
+                })?;
                 info!(
                     port = info::REQUEST_PORT,
                     "the info port is held on this address: a member of its manager"
@@ -318,6 +318,12 @@ fn bind_sockets(
 /// the address (another device of ours: this one joins it as a member).
 pub fn info_port_held(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::AddrInUse
+}
+
+/// A failed bind of the info port: `Ok` when it is held on the address (the
+/// device joins as a member), else the error.
+pub fn member_or(e: std::io::Error) -> Result<(), std::io::Error> {
+    if info_port_held(&e) { Ok(()) } else { Err(e) }
 }
 
 /// The device set up and bound, nothing served yet (see the module).

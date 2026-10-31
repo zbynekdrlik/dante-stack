@@ -319,3 +319,11 @@ fn only_a_held_info_port_makes_a_member() {
     assert!(!info_port_held(&Error::from(ErrorKind::PermissionDenied)));
     assert!(!info_port_held(&Error::from(ErrorKind::AddrNotAvailable)));
 }
+
+#[test]
+fn a_held_info_port_makes_a_member_any_other_bind_error_ends_the_start() {
+    use std::io::{Error, ErrorKind};
+    assert!(member_or(Error::from(ErrorKind::AddrInUse)).is_ok());
+    let other = member_or(Error::from(ErrorKind::PermissionDenied)).unwrap_err();
+    assert_eq!(other.kind(), ErrorKind::PermissionDenied);
+}
