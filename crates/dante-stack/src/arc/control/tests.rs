@@ -293,3 +293,22 @@ fn an_rx_page_reads_the_status_s_two_halves_and_names_by_offset() {
         Some(crate::subscribe::SubStatus::Receiving)
     );
 }
+
+#[test]
+fn an_rx_page_counts_a_channel_0_and_does_not_list_it() {
+    // [slots 2, count 2]: channel 0, then channel 1, both with a name.
+    let names = 2 + 2 * RX_ITEM;
+    let off = |k: usize| (HEADER_LEN + names + k) as u16;
+    let mut body = vec![2, 2];
+    for id in [0u16, 1] {
+        for f in [id, 6, 0, 0, 0, off(0), 0, 0, 0, 0] {
+            body.extend_from_slice(&f.to_be_bytes());
+        }
+    }
+    body.extend_from_slice(b"Vox\0");
+    let page = rx_page(STATUS_OK, &body).expect("a page");
+    assert!(!page.more);
+    assert_eq!((page.slots, page.count), (2, 2));
+    let listed: Vec<u16> = page.items.iter().map(|c| c.channel).collect();
+    assert_eq!(listed, vec![1]);
+}
