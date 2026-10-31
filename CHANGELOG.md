@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4 (2026-10-31)
+
+- Fix (iemmixer, dstack #1 problem C): an ARC-resolved transmitter with fewer than 4 TX channels was asked for a flow of 4 slots. A 2-channel wireless mic refused that with flow-control status 0x0311 every 72 s (captured: n = 4, fpp 4, 96 kHz, 24 bits), and the channel showed 0x15 TxFail. The directory now offers `min(NCHAN, the device's TX channels)` slots (`subscribe::directory::offer_in`), as Dante's own records count nchan and as our announcement does. Test: devices of 1, 2, 3, 4 and 16 channels get 1, 2, 3, 4 and 4 slots. If the mic still refuses with 2 slots, the next step is an fpp step on 0x0311, from a new capture.
+
 ## 0.3.3 (2026-10-31)
 
 - Fix (iemmixer, dstack #1): a device with more mDNS records than mdns-sd's command queue holds (100; iemmixer's has about 200) could end at start with "announcing the device: mDNS record 100 (_netaudio-chan._udp.local.): try again". mdns-sd answers `Error::Again` while its queue is full. The announcer now waits that out, 1 ms between tries and at most `announce::AGAIN_TRIES` (2000) tries a call (2 s at least), for registrations and withdrawals. A queue still full after that is a daemon that does not run, and stays an error. `Announcer::waited()` counts the waits, and the "mDNS records announced" lines log them as `queue_waits`. Tests: a fake daemon whose queue is full for some calls, one that stays full, the wait count, and a real mdns-sd daemon taking 300 records at once.
