@@ -2380,7 +2380,7 @@ fn random_requests_never_panic_and_keep_the_names_valid() {
         let outcome = dev.send(&request(NETAUDIO, seq, op1, op2, &body));
         // No reply only where inferno sends none: op2 not 0, an opcode it
         // does not handle, a body it cannot read.
-        let silent = op2 != 0 || op1 == 0x2204;
+        let silent = op2 != 0;
         let readable = !matches!(
             op1,
             op::TX_MULTICAST_CREATE
@@ -2570,12 +2570,14 @@ async fn the_server_saves_a_rename_and_signals_it() {
 async fn the_server_sends_nothing_for_an_opcode_inferno_does_not_answer() {
     let s = served().await;
     let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    // Dante Controller's 0x2204 and 0x2200 as captured, a request with op2
-    // set, then the counts.
+    // An opcode inferno does not answer (0x2203) with Dante Controller's
+    // page body, 0x2200 as captured, a request with op2 set, then the
+    // counts. (0x2204 was the unanswered one here; it is answered since
+    // 0.3.5.)
     for (seq, op1, op2, body) in [
-        (1, 0x2204, 0, &DC_FIRST_PAGE[..]),
+        (1, 0x2203, 0, &DC_FIRST_PAGE[..]),
         (2, op::TX_FLOWS, 0, &DC_FIRST_PAGE[..]),
-        (3, 0x2204, 0, &DC_FIRST_PAGE[..]),
+        (3, 0x2203, 0, &DC_FIRST_PAGE[..]),
         (4, op::COUNTS, 1, &[][..]),
         (5, op::COUNTS, 0, &[][..]),
     ] {
