@@ -1446,16 +1446,19 @@ fn a_packet_older_than_the_latency_since_its_stamp_counts_as_over_latency() {
     let (slot, _) = rig.flow(vec![Some(1), Some(2)]);
     let start = T;
     rig.tx.step(Some(start), 0);
-    // 200 µs past due: under the first bin's edge, but 333 µs (fpp 32) +
-    // the margin + 200 µs since the stamp, past the 500 µs latency.
+    // 50 µs past due: well under the first bin's edge, but 333 µs (fpp 32) +
+    // the 250 µs margin + 50 µs since the stamp, past the 500 µs latency.
     let due = first_due_ns(start);
     let began = Instant::now();
-    rig.tx.step(Some(due + 200_000), 0);
+    rig.tx.step(Some(due + 50_000), 0);
     let took = nanos(began.elapsed());
     let lane = rig.shared.lane(slot);
-    assert_eq!(lane.late_bins[0], lane.packets, "the bins call it on time");
+    assert_eq!(
+        lane.late_bins[0], lane.packets,
+        "the bins call it on time: {lane:?}"
+    );
     assert!(lane.over_latency >= 1, "{lane:?}");
-    let age = ns_of(FPP, RATE) + TX_MARGIN_NS + 200_000;
+    let age = ns_of(FPP, RATE) + TX_MARGIN_NS + 50_000;
     assert!(
         (age..age + took + 1_000).contains(&lane.age_max_ns),
         "{lane:?}, step took {took} ns"
