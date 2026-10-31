@@ -485,3 +485,24 @@ fn a_real_daemon_takes_more_records_than_its_queue_holds() {
     let _status = a.registry().shutdown();
     announced.unwrap();
 }
+
+#[test]
+fn the_announcer_publishes_the_set_it_registered() {
+    let cfg = config();
+    let mut state = DeviceState::from_config(&cfg);
+    let mut a = Announcer::new(FakeRegistry::default());
+    let published = a.published();
+    assert!(published.lock().unwrap().is_empty());
+    let first = records(&state, &cfg, HOST, IP);
+    a.announce(&first).unwrap();
+    assert_eq!(*published.lock().unwrap(), first);
+    state.tx[0] = "Click".into();
+    let renamed = records(&state, &cfg, HOST, IP);
+    a.announce(&renamed).unwrap();
+    assert_eq!(*published.lock().unwrap(), renamed);
+    // A failed announcement publishes nothing new.
+    let mut a2 = Announcer::new(FakeRegistry::default()).with_again_tries(1);
+    a2.registry().busy.set(u32::MAX);
+    assert!(a2.announce(&first).is_err());
+    assert!(a2.published().lock().unwrap().is_empty());
+}

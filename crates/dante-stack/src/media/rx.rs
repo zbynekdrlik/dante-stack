@@ -798,7 +798,7 @@ fn run(clock: &dyn PtpClock, shared: &RxShared, mut rx: Receiver, cpu: Option<us
     } else {
         warn!(
             priority = RX_PRIORITY,
-            "RX thread runs at normal priority: RLIMIT_RTPRIO allows no SCHED_FIFO"
+            "RX thread runs at normal priority: the normal timing profile, or real-time priority refused"
         );
     }
     place("RX thread", cpu);

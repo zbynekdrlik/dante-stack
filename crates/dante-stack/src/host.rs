@@ -320,6 +320,15 @@ pub fn prepare_with(
     source: ClockSource,
 ) -> Result<Prepared, HostError> {
     let device = load_device(read_config(&opts.config)?)?;
+    // One timing profile per process: the media threads' waits and
+    // priorities read it.
+    if !crate::clock::set_profile(device.cfg.timing) {
+        return Err(setup(format!(
+            "the timing profile {:?} differs from the {:?} another device of this process set",
+            device.cfg.timing,
+            crate::clock::profile()
+        )));
+    }
     if let Some(&tx) = engine_tx.iter().find(|&&tx| tx >= device.cfg.tx.len()) {
         return Err(setup(format!(
             "the engine's TX channel {} is past the device's {} TX channels",
@@ -347,6 +356,8 @@ pub fn prepare_with(
             ClockSource::Dantesync => "dantesync",
             ClockSource::System => "system (test only)",
         },
+        timing = ?device.cfg.timing,
+        windows_wait = ?crate::clock::wait_mode_for(device.cfg.timing),
         "Dante device starting (no PTP sent)"
     );
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -464,6 +475,8 @@ impl Prepared {
             return Err(run_failed(format!("the mDNS interface: {e}")));
         }
         let control = Arc::new(Control::default());
+        #[cfg(windows)]
+        let net_ip = net.ip;
         let served = Served {
             device,
             net,
@@ -476,9 +489,21 @@ impl Prepared {
         };
         let kept = mdns.clone();
         let theirs = Arc::clone(&control);
+        let announcer = Announcer::new(mdns);
+        // Windows: our records answered from the device's own address too
+        // (a SkipAsSource address's answers leave from the primary one;
+        // dstack #1 problem E); it ends with the device's thread.
+        #[cfg(windows)]
+        let own = crate::announce::responder::Responder::start(net_ip, announcer.published())
+            .map_err(|e| warn!(%e, "mDNS answers from the device's address not started"))
+            .ok();
         let thread = std::thread::Builder::new()
             .name("dante-device".to_string())
-            .spawn(move || device_thread(rt, served, Announcer::new(mdns), &theirs, watch));
+            .spawn(move || {
+                #[cfg(windows)]
+                let _own = own;
+                device_thread(rt, served, announcer, &theirs, watch)
+            });
         match thread {
             Ok(thread) => Ok(Host { control, thread }),
             Err(e) => {

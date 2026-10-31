@@ -134,8 +134,27 @@ pub struct DeviceConfig {
     /// Each name a valid Dante device name, each value 1 to 65535.
     #[serde(default)]
     pub playout_override: BTreeMap<String, u32>,
+    /// The timing profile (owner, 31.10.2026): `low_latency`, the tight
+    /// timing iemmixer and dasio need (the default), or `normal`, for an
+    /// application that needs no lowest latency (SongPlayer): no spinning
+    /// core on Windows and no real-time priority for the media threads.
+    #[serde(default)]
+    pub timing: TimingProfile,
     /// Where the state ([`DeviceState`]) is kept.
     pub state_file: PathBuf,
+}
+
+/// A device's timing profile ([`DeviceConfig::timing`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimingProfile {
+    /// Tight timing: real-time priority for the media threads and, on
+    /// Windows, a spin through the last 50 ms of a wait.
+    #[default]
+    LowLatency,
+    /// Stability and little CPU: normal priority and, on Windows, the
+    /// waitable timer for the whole wait.
+    Normal,
 }
 
 /// Why a config was refused: every problem, in fields and channel numbers.

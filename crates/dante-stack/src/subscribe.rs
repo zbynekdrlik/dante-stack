@@ -496,14 +496,13 @@ impl Manager {
         let Some(Some(f)) = self.flows.get(slot) else {
             return RxPlan::default();
         };
-        let playout = self.playout(f);
-        let device = to_samples(self.latency_ns, self.rate);
+        let (playout, delay) = self.read_at(f);
         RxPlan {
             src: Some(*f.to.ip()),
             bps: (f.bits / 8) as u8,
             nslots: f.slots.len() as u8,
             latency: u32::try_from(playout).unwrap_or(u32::MAX),
-            delay: u16::try_from(playout.saturating_sub(device)).unwrap_or(u16::MAX),
+            delay: u16::try_from(delay).unwrap_or(u16::MAX),
             block: u16::try_from(self.block).unwrap_or(u16::MAX),
             live: f.handle.is_some(),
             generation: f.generation,
@@ -524,6 +523,22 @@ impl Manager {
                 .max(to_samples(self.latency_ns, self.rate)),
             None => to_samples(f.latency_ns, self.rate).max(fpp),
         }
+    }
+
+    /// A flow's playout point as the pump reads it, and its delay past
+    /// ours, samples. The pump reads whole blocks: a delay below a block
+    /// does not move a packet's first frame's read (iemmixer's box,
+    /// 31.10.2026: a delay of 8 at a block of 16 played as 0, with holes;
+    /// 16 played clean). So the delay is rounded up to whole blocks.
+    fn read_at(&self, f: &Flow) -> (u64, u64) {
+        let device = to_samples(self.latency_ns, self.rate);
+        let block = self.block.max(1);
+        let delay = self
+            .playout(f)
+            .saturating_sub(device)
+            .div_ceil(block)
+            .saturating_mul(block);
+        (device.saturating_add(delay), delay)
     }
 
     /// Where RX channel `rx`'s samples come from.
@@ -558,7 +573,7 @@ impl Manager {
             fpp: f.fpp,
             latency_ns: f.latency_ns,
             advertised_ns: f.advertised_ns,
-            below_advertised: self.playout(f) < to_samples(f.advertised_ns, self.rate),
+            below_advertised: self.read_at(f).0 < to_samples(f.advertised_ns, self.rate),
         })
     }
 

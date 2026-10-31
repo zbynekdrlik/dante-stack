@@ -7,3 +7,15 @@
 profile = "mutants"
 test_tool = "nextest"
 additional_cargo_test_args = ["--lib", "--test", "hot_path"]
+# Windows-only code: the gate runs on Linux, where it is not compiled, so
+# no test can catch its mutants (CI builds and tests it on Windows).
+exclude_globs = ["crates/dante-stack/src/clock/sys_windows.rs"]
+# Thin glue no unit test can observe without changing the process: the OS
+# priority calls (their decision is `clock::realtime_for`, tested) and the
+# process-wide profile's wrappers (its logic is `clock::ProfileCell`,
+# tested); setting the profile in a test would change every other test.
+exclude_re = [
+  "ask_realtime",
+  "replace set_profile -> bool",
+  "replace profile -> TimingProfile",
+]

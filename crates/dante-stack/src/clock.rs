@@ -37,6 +37,8 @@
 
 pub mod dsyx;
 
+use crate::device::TimingProfile;
+
 #[cfg(any(target_os = "linux", windows))]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -335,6 +337,70 @@ pub fn from_stamp(secs: u32, sub: u32, rate: u32, near: u64) -> u64 {
 
 #[cfg(any(target_os = "linux", windows))]
 pub use os::{DANTESYNC, MonoClock, POLL, Poller, monotonic_ns, poll_dantesync, realtime_ns};
+
+/// How a media thread's wait ends on Windows (dstack #1 problem A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitMode {
+    /// The high-resolution waitable timer for all but the last 50 ms,
+    /// then a yielding spin (the low-latency profile).
+    Spin,
+    /// The high-resolution waitable timer for the whole wait, no spin
+    /// (the normal profile).
+    Timer,
+}
+
+/// The wait of a timing profile.
+pub fn wait_mode_for(profile: TimingProfile) -> WaitMode {
+    match profile {
+        TimingProfile::LowLatency => WaitMode::Spin,
+        TimingProfile::Normal => WaitMode::Timer,
+    }
+}
+
+/// A timing profile set once ([`set_profile`] keeps the process's).
+#[derive(Debug, Default)]
+pub struct ProfileCell(std::sync::OnceLock<TimingProfile>);
+
+impl ProfileCell {
+    pub const fn new() -> Self {
+        Self(std::sync::OnceLock::new())
+    }
+
+    /// Sets the profile, once: `false` when another one was set before.
+    pub fn set(&self, profile: TimingProfile) -> bool {
+        *self.0.get_or_init(|| profile) == profile
+    }
+
+    /// The profile set ([`TimingProfile::LowLatency`] until one is).
+    pub fn get(&self) -> TimingProfile {
+        self.0.get().copied().unwrap_or_default()
+    }
+}
+
+static PROFILE: ProfileCell = ProfileCell::new();
+
+/// Sets this process's timing profile, once (the device's config, before
+/// its media threads start); `false` when another one was set before.
+pub fn set_profile(profile: TimingProfile) -> bool {
+    PROFILE.set(profile)
+}
+
+/// This process's timing profile ([`TimingProfile::LowLatency`] until set).
+pub fn profile() -> TimingProfile {
+    PROFILE.get()
+}
+
+/// Whether a media thread under `profile` asks for real-time priority:
+/// low latency does, normal (an application that needs no lowest latency)
+/// does not.
+pub fn realtime_for(profile: TimingProfile) -> bool {
+    profile == TimingProfile::LowLatency
+}
+
+/// This process's wait mode ([`wait_mode_for`] its profile).
+pub fn wait_mode() -> WaitMode {
+    wait_mode_for(profile())
+}
 
 #[cfg(target_os = "linux")]
 #[path = "clock/sys_linux.rs"]

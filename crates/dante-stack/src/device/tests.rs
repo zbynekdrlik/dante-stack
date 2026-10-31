@@ -1249,3 +1249,24 @@ fn a_per_source_playout_override_is_read_and_checked() {
     ))
     .unwrap();
 }
+
+#[test]
+fn the_timing_profile_is_read_low_latency_by_default() {
+    assert_eq!(
+        DeviceConfig::from_toml(TEST_DEVICE).unwrap().timing,
+        TimingProfile::LowLatency
+    );
+    let normal = DeviceConfig::from_toml(&config_with(
+        "latency_ns =",
+        "latency_ns = 1000000\ntiming = \"normal\"",
+    ))
+    .unwrap();
+    assert_eq!(normal.timing, TimingProfile::Normal);
+    assert!(
+        DeviceConfig::from_toml(&config_with(
+            "latency_ns =",
+            "latency_ns = 1000000\ntiming = \"fast\"",
+        ))
+        .is_err()
+    );
+}

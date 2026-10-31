@@ -600,7 +600,7 @@ fn run<P: Process>(clock: &dyn PtpClock, mut pump: Pump<P>, stop: &AtomicBool) {
     } else {
         warn!(
             priority = ENGINE_PRIORITY,
-            "engine pump runs at normal priority: RLIMIT_RTPRIO allows no SCHED_FIFO"
+            "engine pump runs at normal priority: the normal timing profile, or real-time priority refused"
         );
     }
     place("engine pump", pump.tx.cfg.pump_cpu);
