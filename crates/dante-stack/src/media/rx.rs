@@ -106,8 +106,16 @@ pub struct RxPlan {
     pub bps: u8,
     /// Channel slots per frame.
     pub nslots: u8,
-    /// The flow's latency, samples.
+    /// The flow's playout point behind media now, samples (P_flow: its
+    /// latency, at least its frames per packet; at most `u16::MAX`).
     pub latency: u32,
+    /// How much later than the device latency this flow's channels are
+    /// read, samples (P_flow − P; at most `u16::MAX`).
+    pub delay: u16,
+    /// The pump's block, samples: a packet counts late once its first
+    /// frame is later than `latency + block`, the read budget of a block
+    /// whose frames a packet fills (at most 511).
+    pub block: u16,
     /// Granted by its transmitter: keepalives go out.
     pub live: bool,
     /// Which flow (a new flow in the slot is a new plan).
@@ -121,9 +129,12 @@ impl RxPlan {
             return [0; 2];
         };
         [
-            (u64::from(src.to_bits()) << 32) + u64::from(self.latency),
+            (u64::from(src.to_bits()) << 32)
+                + (u64::from(self.delay) << 16)
+                + u64::from(self.latency.min(u32::from(u16::MAX))),
             (1 << 63)
                 + (u64::from(self.live) << 62)
+                + (u64::from(self.block & 0x1ff) << 48)
                 + (u64::from(self.generation) << 16)
                 + (u64::from(self.bps) << 8)
                 + u64::from(self.nslots),
@@ -139,7 +150,9 @@ impl RxPlan {
             src: Some(Ipv4Addr::from_bits((w[0] >> 32) as u32)),
             bps: (w[1] >> 8) as u8,
             nslots: w[1] as u8,
-            latency: w[0] as u32,
+            latency: u32::from(w[0] as u16),
+            delay: (w[0] >> 16) as u16,
+            block: ((w[1] >> 48) & 0x1ff) as u16,
             live: (w[1] >> 62) & 1 == 1,
             generation: (w[1] >> 16) as u32,
         }
@@ -231,6 +244,9 @@ pub struct RxShared {
     rate: u32,
     plans: [Cell<2>; MAX_FLOWS],
     routes: Box<[AtomicU64]>,
+    /// Each RX channel's read delay ([`RxPlan::delay`] of its flow), for
+    /// the engine's pump.
+    delays: Box<[AtomicU32]>,
     routes_version: AtomicU32,
     sockets: Box<[UdpSocket]>,
     rings: Arc<[Ring]>,
@@ -263,6 +279,7 @@ impl RxShared {
             rate,
             plans: std::array::from_fn(|_| Cell::new()),
             routes: (0..rings.len()).map(|_| AtomicU64::new(0)).collect(),
+            delays: (0..rings.len()).map(|_| AtomicU32::new(0)).collect(),
             routes_version: AtomicU32::new(0),
             sockets,
             rings,
@@ -292,11 +309,18 @@ impl RxShared {
                 changed = true;
             }
         }
+        let mut delays = [0u16; MAX_FLOWS];
         for (slot, cell) in self.plans.iter().enumerate() {
-            let w = plan(slot).words();
+            let p = plan(slot);
+            delays[slot] = p.delay;
+            let w = p.words();
             if cell.peek() != w {
                 cell.write(w);
             }
+        }
+        for (rx, cell) in self.delays.iter().enumerate() {
+            let delay = route(rx).and_then(|r| delays.get(r.flow).copied());
+            cell.store(u32::from(delay.unwrap_or(0)), Ordering::Relaxed);
         }
         for (rx, cell) in self.routes.iter().enumerate() {
             let want = RxRoute::word(route(rx));
@@ -308,6 +332,15 @@ impl RxShared {
         if changed {
             self.routes_version.fetch_add(1, Ordering::Release);
         }
+    }
+
+    /// How much later than the device latency the engine's pump reads RX
+    /// channel `rx` (from 0), samples: its flow's [`RxPlan::delay`] (one
+    /// `Relaxed` load).
+    pub fn delay(&self, rx: usize) -> u64 {
+        self.delays
+            .get(rx)
+            .map_or(0, |d| u64::from(d.load(Ordering::Relaxed)))
     }
 
     /// Whether RX channel `rx` (from 0) is routed to a flow slot (its route
@@ -678,7 +711,7 @@ impl Receiver {
                 .min_lateness_ns
                 .0
                 .fetch_min(now_ns.saturating_sub(ns_of(pos, rate)), Ordering::Relaxed);
-            if lateness > u64::from(lane.plan.latency) {
+            if lateness > u64::from(lane.plan.latency) + u64::from(lane.plan.block) {
                 count(&stats.late);
             }
             let end = pos.saturating_add(nframes as u64);

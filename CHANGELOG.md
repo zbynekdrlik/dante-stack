@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 (2026-10-31)
+
+Consumer-visible: an RX channel whose flow needs a later playout is now later in the engine's mix by that much; every other channel stays at the device latency.
+
+- New: per-flow playout (owner's ruling, relayed by iemmixer: a slow source must not raise the others' latency; dstack #1). A flow's playout point P_flow = max(its transmitter's latency, ours, its frames per packet), with no config. The pump reads that flow's channels P_flow − P samples earlier in stamps (`RxShared::delay`, one `Relaxed` load per channel per block, real-time contract unchanged). A packet counts `late` only past P_flow + B (the pump's block, its real read budget), so a healthy long-packet flow no longer counts every packet late. For iemmixer's wireless mic at fpp 32 and a device latency of 24 samples, that flow plays out at 32 (delay 8) while the stage rack stays at 24. A transmitter that advertises a latency above ours is now also read at that latency (it used to judge `late` only).
+- `media::rx::RxPlan` has `delay` and `block`; `latency` is the playout point, kept in 16 bits.
+- ctl status, per RX flow: `latency` is the negotiated latency (its transmitter's or ours) in samples, new `playout` (P_flow), `delay` (P_flow − P) and `late_after` (P_flow + B).
+- Removed: `subscribe::fpp_misses` and its warning (0.3.7): the playout now covers the fpp. The status shows each flow's `playout` and `delay`.
+
 ## 0.3.7 (2026-10-31)
 
 - New: a warning when an RX flow's frames per packet reach its latency (`subscribe::fpp_misses`). A packet leaves its transmitter only after its last frame, so its first frame is at least fpp samples old when it arrives. At fpp >= latency every packet is late. On iemmixer's box the wireless mic accepted only fpp 32 (after the 0.3.6 step) at a device latency of 24 samples: every packet was late, with 13 holes in 10 s. The line names `fpp` and `latency_samples` and says to raise `latency_ns` above fpp plus the network's lateness.

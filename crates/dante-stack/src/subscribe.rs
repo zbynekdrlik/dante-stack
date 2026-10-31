@@ -257,6 +257,8 @@ pub struct Manager {
     ports: [u16; MAX_FLOWS],
     rate: u32,
     latency_ns: u64,
+    /// The pump's block, samples (the device config's).
+    block: u64,
     subs: Vec<Option<Subscription>>,
     routes: Vec<Option<Route>>,
     /// A channel's last request failed this way (until it is routed again
@@ -297,6 +299,7 @@ impl Manager {
             ports,
             rate: cfg.sample_rate,
             latency_ns: cfg.latency_ns,
+            block: cfg.block,
             subs: vec![None; n],
             routes: vec![None; n],
             failed: vec![None; n],
@@ -476,14 +479,28 @@ impl Manager {
         let Some(Some(f)) = self.flows.get(slot) else {
             return RxPlan::default();
         };
+        let playout = self.playout(f);
+        let device = to_samples(self.latency_ns, self.rate);
         RxPlan {
             src: Some(*f.to.ip()),
             bps: (f.bits / 8) as u8,
             nslots: f.slots.len() as u8,
-            latency: u32::try_from(to_samples(f.latency_ns, self.rate)).unwrap_or(u32::MAX),
+            latency: u32::try_from(playout).unwrap_or(u32::MAX),
+            delay: u16::try_from(playout.saturating_sub(device)).unwrap_or(u16::MAX),
+            block: u16::try_from(self.block).unwrap_or(u16::MAX),
             live: f.handle.is_some(),
             generation: f.generation,
         }
+    }
+
+    /// A flow's playout point, samples: its latency (its transmitter's or
+    /// ours, the larger) and at least its frames per packet. A packet leaves
+    /// its transmitter after its last frame; the pump's block in hand covers
+    /// the network for packets that align with blocks (iemmixer's box,
+    /// 31.10.2026: fpp 32 played out at 31 with a block of 16, no hole).
+    /// Only that flow's channels are read later; the others keep ours.
+    fn playout(&self, f: &Flow) -> u64 {
+        to_samples(f.latency_ns, self.rate).max(u64::from(f.fpp))
     }
 
     /// Where RX channel `rx`'s samples come from.
@@ -688,15 +705,6 @@ impl Manager {
         }
         ids.resize(n, None);
         let latency_ns = first.latency_ns.max(self.latency_ns);
-        let latency = to_samples(latency_ns, self.rate);
-        if fpp_misses(fpp, latency) {
-            warn!(
-                fpp,
-                latency_samples = latency,
-                "RX flow: its frames per packet reach the latency, so every packet is late; \
-                 raise the device's latency_ns above fpp plus the network's lateness"
-            );
-        }
         self.generation = self.generation.wrapping_add(1);
         let id = FlowId {
             slot,
@@ -816,14 +824,6 @@ impl Manager {
                     .is_some_and(|t| now < t.saturating_add(RETRY_NS))
         });
     }
-}
-
-/// A flow of `fpp` frames per packet played out `latency` samples after its
-/// stamps misses every packet's first frames: a packet leaves its
-/// transmitter only after its last frame (iemmixer, 31.10.2026: fpp 32 at
-/// 24 samples, every packet late).
-pub fn fpp_misses(fpp: u16, latency: u64) -> bool {
-    u64::from(fpp) >= latency
 }
 
 /// The frames per packet to ask `a`'s transmitter for in a flow of `n`

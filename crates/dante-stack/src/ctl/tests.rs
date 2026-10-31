@@ -625,6 +625,9 @@ const WORDS: &[&str] = &[
     "rx",
     "granted",
     "latency",
+    "playout",
+    "delay",
+    "late_after",
     "refused",
     "stray",
     "out_of_order",
@@ -812,6 +815,8 @@ fn the_status_shows_the_packets_judge_in_ns_numbers_only() {
         bps: 3,
         nslots: 1,
         latency: 96,
+        delay: 0,
+        block: 0,
         live: true,
         generation: 1,
     };
@@ -855,7 +860,7 @@ fn the_status_shows_the_packets_judge_in_ns_numbers_only() {
     assert!(
         s.contains(
             "\"rx\":[{\"flow\":4,\"granted\":0,\"fpp\":0,\"channels\":0,\"latency\":0,\
-             \"packets\":2,\"refused\":0,\"stray\":0,\"out_of_order\":0,\"late\":0,\
+             \"playout\":0,\"delay\":0,\"late_after\":0,\"packets\":2,\"refused\":0,\"stray\":0,\"out_of_order\":0,\"late\":0,\
              \"unplaced\":0,\"lateness\":40,\"lateness_min_ns\":260416,\"keepalives\":0,\
              \"keepalive_errors\":0,\"recv_errors\":0}],"
         ),
@@ -921,7 +926,7 @@ fn the_status_lists_the_flows_of_both_sides() {
     assert!(
         s.contains(
             "\"rx\":[{\"flow\":1,\"granted\":1,\"fpp\":32,\"channels\":2,\"latency\":96,\
-             \"packets\":0,\"refused\":0,\"stray\":0,\"out_of_order\":0,\"late\":0,\
+             \"playout\":96,\"delay\":0,\"late_after\":128,\"packets\":0,\"refused\":0,\"stray\":0,\"out_of_order\":0,\"late\":0,\
              \"unplaced\":0,\"lateness\":0,\"keepalives\":0,\"keepalive_errors\":0,\
              \"recv_errors\":0}],\"rx_poll_errors\":0,"
         ),
