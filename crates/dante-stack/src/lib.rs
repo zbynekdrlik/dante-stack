@@ -27,6 +27,9 @@
 //!
 //! - [`device`]: the config (a private TOML on the box) and the persisted
 //!   names and RX subscriptions, with Dante's name rules.
+//! - [`discover`]: every Dante device on one interface, for a controller
+//!   (`_netaudio-arc` and `_netaudio-dbc` records, live changes), not tied
+//!   to our own device.
 //! - [`wire`]: the request/response datagram ARC and CMC share.
 //! - [`arc`]: the control server on UDP 4440: names, channel lists,
 //!   renames, the TX and RX flow lists, our RX subscriptions (set on our
@@ -91,6 +94,7 @@ pub mod cmc;
 pub mod ctl;
 pub mod daemon;
 pub mod device;
+pub mod discover;
 pub mod flows;
 pub mod health;
 #[cfg(any(target_os = "linux", windows))]
