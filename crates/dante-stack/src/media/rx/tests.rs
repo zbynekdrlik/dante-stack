@@ -939,6 +939,4 @@ fn a_pass_rests_until_its_period_from_the_start_and_never_past_it() {
     assert_eq!(rest_ns(1_000_000, 1_000_000 + PASS_NS), 0);
     assert_eq!(rest_ns(1_000_000, 1_000_000 + PASS_NS + 1), 0);
     assert_eq!(rest_ns(u64::MAX, 0), u64::MAX, "saturates");
-    // At most a fifth of the lowest latency we receive at.
-    assert!(PASS_NS * 5 <= 250_000);
 }

@@ -88,6 +88,7 @@ pub const WAKE_NS: u64 = 33_000_000;
 /// second on the core it shares with TX). A datagram is read at most this
 /// much later, a fifth of the lowest latency we receive at (250 µs).
 pub const PASS_NS: u64 = 50_000;
+const _: () = assert!(PASS_NS * 5 <= 250_000, "a fifth of the lowest RX latency");
 
 /// How long to rest after a pass that began at `began` (the thread's clock,
 /// ns) when it is `now`: up to [`PASS_NS`] from the start, 0 past it.
