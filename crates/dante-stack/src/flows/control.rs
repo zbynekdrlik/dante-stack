@@ -72,6 +72,10 @@ pub mod status {
     pub const BAD_REQUEST: u16 = 0x0302;
     /// No free flow.
     pub const TOO_MANY_TX_FLOWS: u16 = 0x0315;
+    /// A refusal of the flow's parameters with a free flow: a 2-channel
+    /// wireless mic answered it to fpp 4 (iemmixer's capture, 31.10.2026,
+    /// dstack #1). Read as "fpp too small": the receiver asks larger.
+    pub const FPP_REFUSED: u16 = 0x0314;
 }
 
 /// A flow's handle: the transmitter's slot (`u32`) and a cookie (`u16`),

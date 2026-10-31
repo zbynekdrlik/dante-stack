@@ -1071,3 +1071,54 @@ fn the_fpp_steps_stop_at_32_and_the_refusal_then_counts_as_a_failure() {
     assert!(times.len() <= 3 + 1 + 200 / 9, "{times:?}");
     assert_eq!(m.status(0), Some(SubStatus::TxFail));
 }
+
+#[test]
+fn the_fpp_steps_are_kept_for_at_most_64_transmitters() {
+    // One RX channel per transmitter, each a mic that refuses fpp 4.
+    let net = Fake::default();
+    let mut cfg = cfg();
+    cfg.rx = (1..=65).map(|i| format!("RX {i}")).collect();
+    let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
+    for i in 0..65u8 {
+        let mut a = mic(1);
+        a.control = SocketAddrV4::new(Ipv4Addr::new(10, 0, 1, i), 4455);
+        net.add(&format!("mic-{i}"), "Vox", a);
+        m.set(usize::from(i), Some(sub("Vox", &format!("mic-{i}"))));
+    }
+    let asked = run_with_mic_all(&mut m, &net, 400, |fpp| {
+        if fpp < 8 {
+            Answer::Refused(0x0314)
+        } else {
+            Answer::Granted([0, 0, 0, 9, 0, 9])
+        }
+    });
+    let stepped = (0..65u8)
+        .filter(|&i| {
+            let ip = Ipv4Addr::new(10, 0, 1, i);
+            asked.iter().any(|&(_, to, fpp)| to == ip && fpp == 8)
+        })
+        .count();
+    assert_eq!(stepped, 64, "{asked:?}");
+}
+
+/// [`run_with_mic`] for transmitters on 10.0.1.x: each answered by
+/// `answer` for its fpp.
+fn run_with_mic_all(
+    m: &mut Manager,
+    net: &Fake,
+    seconds: u64,
+    answer: impl Fn(u16) -> Answer,
+) -> Vec<(u64, Ipv4Addr, u16)> {
+    let mut asked = Vec::new();
+    let mut t = 0;
+    while t <= seconds * S {
+        for a in m.tick(t, &NONE, net) {
+            if let Action::Request { flow, to, req } = &a {
+                asked.push((t / S, *to.ip(), req.fpp));
+                m.answered(*flow, answer(req.fpp), t);
+            }
+        }
+        t += 100 * MS;
+    }
+    asked
+}
