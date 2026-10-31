@@ -44,15 +44,6 @@ jobs:
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: A SkipAsSource address for the mDNS source test (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $index = (Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object RouteMetric | Select-Object -First 1).InterfaceIndex
-          New-NetIPAddress -InterfaceIndex $index -IPAddress 192.168.254.10 -PrefixLength 24 -SkipAsSource $true | Out-Null
-          Get-NetIPAddress -InterfaceIndex $index -AddressFamily IPv4 | Format-Table IPAddress, SkipAsSource
-          "DSTACK_SKIP_AS_SOURCE_IP=192.168.254.10" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - run: cargo test --workspace --locked
 
   coverage:
