@@ -1168,6 +1168,7 @@ fn a_flow_needing_a_later_playout_delays_only_its_own_channels() {
     // 24 (owner: a slow source must not raise the others' latency).
     let mut cfg = cfg();
     cfg.latency_ns = 250_000;
+    cfg.block = 16;
     let net = Fake::default();
     net.add("mic", "Vox", mic(1));
     let mut rack = adv(PEER_IP, 1);
@@ -1184,9 +1185,11 @@ fn a_flow_needing_a_later_playout_delays_only_its_own_channels() {
         }
     });
     let mic_plan = m.rx_plan(m.rx_route(0).expect("the mic routed").flow);
+    // P_flow 32 needs a delay of 8, read in whole blocks of 16: 16, so
+    // it plays out at 40 (the value that played clean on the box).
     assert_eq!(
         (mic_plan.latency, mic_plan.delay, mic_plan.block),
-        (32, 8, 32)
+        (40, 16, 16)
     );
     let rack_plan = m.rx_plan(m.rx_route(1).expect("the rack routed").flow);
     assert_eq!((rack_plan.latency, rack_plan.delay), (24, 0));
@@ -1206,6 +1209,7 @@ fn advertised_mic() -> Advertised {
 fn an_advertised_latency_is_honoured_and_an_override_goes_below_it_marked() {
     let mut cfg = cfg();
     cfg.latency_ns = 250_000;
+    cfg.block = 16;
     let net = Fake::default();
     net.add("Mics-01", "Vox", advertised_mic());
     // By default the advertised 1 ms (96 samples at 96 kHz) is honoured.
@@ -1213,7 +1217,8 @@ fn an_advertised_latency_is_honoured_and_an_override_goes_below_it_marked() {
     m.set(0, Some(sub("Vox", "Mics-01")));
     run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
     let slot = m.rx_route(0).expect("routed").flow;
-    assert_eq!((m.rx_plan(slot).latency, m.rx_plan(slot).delay), (96, 72));
+    // 96 needs 72 more than our 24: 80 in whole blocks of 16.
+    assert_eq!((m.rx_plan(slot).latency, m.rx_plan(slot).delay), (104, 80));
     let v = m.flow(slot).unwrap();
     assert_eq!((v.advertised_ns, v.below_advertised), (1_000_000, false));
     // The owner's approval for this device: 32 samples, marked below.
@@ -1222,7 +1227,7 @@ fn an_advertised_latency_is_honoured_and_an_override_goes_below_it_marked() {
     m.set(0, Some(sub("Vox", "Mics-01")));
     run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
     let slot = m.rx_route(0).expect("routed").flow;
-    assert_eq!((m.rx_plan(slot).latency, m.rx_plan(slot).delay), (32, 8));
+    assert_eq!((m.rx_plan(slot).latency, m.rx_plan(slot).delay), (40, 16));
     assert!(m.flow(slot).unwrap().below_advertised);
     // Never below the flow's fpp, nor our own latency.
     cfg.playout_override.insert("mics-01".to_string(), 8);
@@ -1230,7 +1235,11 @@ fn an_advertised_latency_is_honoured_and_an_override_goes_below_it_marked() {
     m.set(0, Some(sub("Vox", "Mics-01")));
     run_with_mic(&mut m, &net, 1, |_| Answer::Granted([0, 0, 0, 9, 0, 9]));
     let slot = m.rx_route(0).expect("routed").flow;
-    assert_eq!(m.rx_plan(slot).latency, 32, "at least its fpp");
+    assert_eq!(
+        m.rx_plan(slot).latency,
+        40,
+        "at least its fpp, in whole blocks"
+    );
     cfg.latency_ns = 1_000_000;
     let mut m = Manager::new(&cfg, "test-device", OUR_IP, ports());
     m.set(0, Some(sub("Vox", "Mics-01")));
