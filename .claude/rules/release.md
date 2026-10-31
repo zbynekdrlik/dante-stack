@@ -17,3 +17,4 @@ paths:
 - **Tell the consumers** over peer (iemmixer, dasio, songplayer as it applies) with the tag and what they must change.
 - **New dependencies** must be published at least two weeks ago (`curl https://crates.io/api/v1/crates/<c>/<v>` gives `created_at`); pin older with `cargo update -p <c> --precise <v>`. Seed a new lockfile (fuzz) from the main `Cargo.lock` so tested versions carry over.
 - **Public repo:** no site addresses or real device names in code, commits, issues or PR text; they live in `~/.config/dstack/`.
+- **A changed public signature:** check the fuzz crate too, before the push (`cargo check --manifest-path fuzz/Cargo.toml --bin <target>` for each target in `fuzz/fuzz_targets/`). Only the fuzz job builds it, so a missed call site shows only there (v0.4.5: `cmc::handle_cmc` took the process id).

@@ -311,3 +311,19 @@ fn wait_is_the_device_thread_s_own_end() {
         Err(HostError::Run(PANICKED.into()))
     );
 }
+
+#[test]
+fn only_a_held_info_port_makes_a_member() {
+    use std::io::{Error, ErrorKind};
+    assert!(info_port_held(&Error::from(ErrorKind::AddrInUse)));
+    assert!(!info_port_held(&Error::from(ErrorKind::PermissionDenied)));
+    assert!(!info_port_held(&Error::from(ErrorKind::AddrNotAvailable)));
+}
+
+#[test]
+fn a_held_info_port_makes_a_member_any_other_bind_error_ends_the_start() {
+    use std::io::{Error, ErrorKind};
+    assert!(member_or(Error::from(ErrorKind::AddrInUse)).is_ok());
+    let other = member_or(Error::from(ErrorKind::PermissionDenied)).unwrap_err();
+    assert_eq!(other.kind(), ErrorKind::PermissionDenied);
+}
